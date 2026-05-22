@@ -1,0 +1,42 @@
+{
+    "version": 8,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 22,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "amd64-debug",
+            "displayName": "Debugger with Ninja for linux-amd64",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_MAKE_PROGRAM": "$penv{HOME}/Qt/Tools/Ninja/ninja",
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "CMAKE_C_COMPILER": "/usr/bin/gcc",
+                "CMAKE_CXX_COMPILER": "/usr/bin/g++",
+                "CMAKE_BUILD_TYPE": "Debug"
+            },
+            "environment": {
+                "LD_LIBRARY_PATH": "${sourceDir}/../3rdparty/HCNetSDK/lib"
+            }
+        },
+        {
+            "name": "amd64-release",
+            "displayName": "Releaser with Ninja for linux-amd64",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_MAKE_PROGRAM": "$penv{HOME}/Qt/Tools/Ninja/ninja",
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "CMAKE_C_COMPILER": "/usr/bin/gcc",
+                "CMAKE_CXX_COMPILER": "/usr/bin/g++",
+                "CMAKE_BUILD_TYPE": "Release"
+            },
+            "environment": {
+                "LD_LIBRARY_PATH": "${sourceDir}/../3rdparty/HCNetSDK/lib"
+            }
+        }
+    ]
+}

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake --build /home/thaivd/TDIC/VisionPlayback/out/build/amd64-debug)"
+    ]
+  }
+}
