@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "DownloadWorker.h"
 #include "PlaybackDialog.h"
+#include "PlaybackManagerDialog.h"
 #include "VideoPlayerWidget.h"
 
 #include <QCoreApplication>
@@ -40,8 +41,12 @@ void MainWindow::setupUi() {
     m_newPlaybackBtn = new QPushButton("New Playback", this);
     m_newPlaybackBtn->setFixedHeight(36);
 
+    m_managePlaybacksBtn = new QPushButton("Manage Playbacks", this);
+    m_managePlaybacksBtn->setFixedHeight(36);
+
     auto* toolbar = new QHBoxLayout;
     toolbar->addWidget(m_newPlaybackBtn);
+    toolbar->addWidget(m_managePlaybacksBtn);
     toolbar->addStretch();
 
     m_statusLabel = new QLabel("Ready.", this);
@@ -59,7 +64,21 @@ void MainWindow::setupUi() {
     layout->addWidget(m_progressBar);
     layout->addWidget(m_playerWidget, 1);
 
-    connect(m_newPlaybackBtn, &QPushButton::clicked, this, &MainWindow::onNewPlaybackClicked);
+    connect(m_newPlaybackBtn,      &QPushButton::clicked, this, &MainWindow::onNewPlaybackClicked);
+    connect(m_managePlaybacksBtn, &QPushButton::clicked, this, &MainWindow::onManagePlaybacksClicked);
+}
+
+void MainWindow::onManagePlaybacksClicked() {
+    QString downloadsPath = QCoreApplication::applicationDirPath() + "/downloads";
+    PlaybackManagerDialog dlg(downloadsPath, this);
+    if (dlg.exec() != QDialog::Accepted || dlg.selectedPath().isEmpty())
+        return;
+
+    m_outputPath = dlg.selectedPath();
+    m_progressBar->hide();
+    m_statusLabel->setText("Playing: " + QFileInfo(m_outputPath).fileName());
+    m_playerWidget->show();
+    m_playerWidget->play(m_outputPath);
 }
 
 void MainWindow::onNewPlaybackClicked() {

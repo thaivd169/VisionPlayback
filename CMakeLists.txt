@@ -42,7 +42,9 @@ qt_add_executable(VisionPlayback
     DownloadWorker.h    DownloadWorker.cpp
     VideoPlayerWidget.h VideoPlayerWidget.cpp
     MainWindow.h        MainWindow.cpp
+    PlaybackManagerDialog.h  PlaybackManagerDialog.cpp
 )
+
 
 target_link_libraries(VisionPlayback PRIVATE
     Qt${QT_VERSION_MAJOR}::Core

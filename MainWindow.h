@@ -20,6 +20,7 @@ public:
 
 private slots:
     void onNewPlaybackClicked();
+    void onManagePlaybacksClicked();
     void onProgressChanged(int percent);
     void onDownloadFinished(bool success, const QString& errorMsg);
 
@@ -28,6 +29,7 @@ private:
     QString          m_outputPath;
 
     QPushButton*     m_newPlaybackBtn;
+    QPushButton*     m_managePlaybacksBtn;
     QLabel*          m_statusLabel;
     QProgressBar*    m_progressBar;
     VideoPlayerWidget* m_playerWidget;
