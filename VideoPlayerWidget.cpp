@@ -30,7 +30,7 @@ VideoPlayerWidget::VideoPlayerWidget(QWidget* parent) : QWidget(parent) {
 
     // Speed buttons
     struct SpeedDef { const char* label; double rate; };
-    const SpeedDef speeds[] = {{"0.5×", 0.5}, {"1×", 1.0}, {"2×", 2.0}, {"4×", 4.0}};
+    const SpeedDef speeds[] = {{"0.5×", 0.5}, {"1×", 1.0}, {"2×", 2.0}, {"4×", 4.0}, {"16×", 16.0}};
 
     auto* speedRow = new QHBoxLayout;
     speedRow->addWidget(new QLabel("Speed:"));
