@@ -1,11 +1,12 @@
 #include "MainWindow.h"
-#include "DownloadWorker.h"
+#include "DashServer.h"
 #include "PlaybackDialog.h"
 #include "PlaybackManagerDialog.h"
+#include "StreamJobManager.h"
+#include "VideoKey.h"
 #include "VideoPlayerWidget.h"
 
 #include <QCoreApplication>
-#include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -14,16 +15,31 @@
 #include <QWidget>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
+    const QString downloadsDir = QCoreApplication::applicationDirPath() + "/downloads";
+    QDir().mkpath(downloadsDir);
+
+    m_dashServer = new DashServer(downloadsDir, 8080, this);
+    if (!m_dashServer->start()) {
+        QMessageBox::critical(nullptr, "Server Error",
+                              "Could not bind DASH server on port 8080.\n"
+                              "Another process may already be using that port.");
+    }
+
+    m_jobManager = new StreamJobManager(downloadsDir, this);
+    connect(m_jobManager, &StreamJobManager::streamReady,
+            this, &MainWindow::onStreamReady);
+    connect(m_jobManager, &StreamJobManager::streamError,
+            this, &MainWindow::onStreamError);
+    connect(m_jobManager, &StreamJobManager::downloadProgress,
+            this, &MainWindow::onDownloadProgress);
+
+    connect(m_dashServer, &DashServer::streamRequested,
+            this, &MainWindow::onStreamRequested);
+
     setupUi();
 }
 
 MainWindow::~MainWindow() {
-    // Stop any running download cleanly before logout
-    if (m_workerThread && m_workerThread->isRunning()) {
-        if (m_worker) m_worker->cancel();
-        m_workerThread->quit();
-        m_workerThread->wait(3000);
-    }
     if (m_userId >= 0) {
         NET_DVR_Logout_V30(m_userId);
         m_userId = -1;
@@ -64,21 +80,35 @@ void MainWindow::setupUi() {
     layout->addWidget(m_progressBar);
     layout->addWidget(m_playerWidget, 1);
 
-    connect(m_newPlaybackBtn,      &QPushButton::clicked, this, &MainWindow::onNewPlaybackClicked);
+    connect(m_newPlaybackBtn,     &QPushButton::clicked, this, &MainWindow::onNewPlaybackClicked);
     connect(m_managePlaybacksBtn, &QPushButton::clicked, this, &MainWindow::onManagePlaybacksClicked);
 }
 
 void MainWindow::onManagePlaybacksClicked() {
-    QString downloadsPath = QCoreApplication::applicationDirPath() + "/downloads";
+    const QString downloadsPath = QCoreApplication::applicationDirPath() + "/downloads";
     PlaybackManagerDialog dlg(downloadsPath, this);
     if (dlg.exec() != QDialog::Accepted || dlg.selectedPath().isEmpty())
         return;
 
-    m_outputPath = dlg.selectedPath();
+    const QString path = dlg.selectedPath();
     m_progressBar->hide();
-    m_statusLabel->setText("Playing: " + QFileInfo(m_outputPath).fileName());
+    m_statusLabel->setText("Playing: " + QFileInfo(path).fileName());
     m_playerWidget->show();
-    m_playerWidget->play(m_outputPath);
+    m_playerWidget->play(path);
+}
+
+void MainWindow::onStreamRequested(int channel, const QString& startTime, const QString& endTime) {
+    if (m_userId < 0)
+        return; // not logged in; can't download
+
+    const NET_DVR_TIME s = VideoKey::parseTime(startTime);
+    const NET_DVR_TIME e = VideoKey::parseTime(endTime);
+
+    m_statusLabel->setText(QString("Preparing stream for ch%1…").arg(channel));
+    m_progressBar->setValue(0);
+    m_progressBar->show();
+
+    m_jobManager->requestStream(m_userId, channel, s, e);
 }
 
 void MainWindow::onNewPlaybackClicked() {
@@ -86,65 +116,31 @@ void MainWindow::onNewPlaybackClicked() {
     if (dlg.exec() != QDialog::Accepted)
         return;
 
-    QString ts = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
-    m_outputPath = QCoreApplication::applicationDirPath()
-                 + "/downloads/" + ts
-                 + "_ch" + QString::number(dlg.channel()) + ".mp4";
-    QDir().mkpath(QFileInfo(m_outputPath).absolutePath());
-
-    PlaybackRequest req;
-    req.userId    = m_userId;
-    req.channel   = dlg.channel();
-    req.startTime = dlg.startTime();
-    req.endTime   = dlg.endTime();
-    req.outputPath = m_outputPath;
-
-    startWorker(req);
-}
-
-void MainWindow::startWorker(const PlaybackRequest& req) {
     m_newPlaybackBtn->setEnabled(false);
-    m_statusLabel->setText("Downloading…");
+    m_statusLabel->setText("Preparing stream…");
     m_progressBar->setValue(0);
     m_progressBar->show();
     m_playerWidget->hide();
 
-    m_worker = new DownloadWorker(req);
-    m_workerThread = new QThread(this);
-    m_worker->moveToThread(m_workerThread);
-
-    connect(m_workerThread, &QThread::started,
-            m_worker, &DownloadWorker::run);
-    connect(m_worker, &DownloadWorker::progressChanged,
-            this, &MainWindow::onProgressChanged);
-    connect(m_worker, &DownloadWorker::finished,
-            this, &MainWindow::onDownloadFinished);
-    connect(m_worker, &DownloadWorker::finished,
-            m_workerThread, &QThread::quit);
-    connect(m_workerThread, &QThread::finished,
-            m_worker, &QObject::deleteLater);
-    connect(m_workerThread, &QThread::finished,
-            m_workerThread, &QObject::deleteLater);
-
-    m_workerThread->start();
+    m_jobManager->requestStream(m_userId, dlg.channel(), dlg.startTime(), dlg.endTime());
 }
 
-void MainWindow::onProgressChanged(int percent) {
-    m_progressBar->setValue(percent);
-    m_statusLabel->setText(QString("Downloading… %1%").arg(percent));
-}
-
-void MainWindow::onDownloadFinished(bool success, const QString& errorMsg) {
+void MainWindow::onStreamReady(const QString& mpdUrl) {
     m_progressBar->hide();
     m_newPlaybackBtn->setEnabled(true);
-
-    if (!success) {
-        m_statusLabel->setText("Idle.");
-        QMessageBox::critical(this, "Download Failed", errorMsg);
-        return;
-    }
-
-    m_statusLabel->setText("Playing: " + QFileInfo(m_outputPath).fileName());
+    m_statusLabel->setText("Streaming: " + mpdUrl);
     m_playerWidget->show();
-    m_playerWidget->play(m_outputPath);
+    m_playerWidget->play(mpdUrl);
+}
+
+void MainWindow::onStreamError(const QString& reason) {
+    m_progressBar->hide();
+    m_newPlaybackBtn->setEnabled(true);
+    m_statusLabel->setText("Idle.");
+    QMessageBox::critical(this, "Stream Error", reason);
+}
+
+void MainWindow::onDownloadProgress(int /*channel*/, int percent) {
+    m_progressBar->setValue(percent);
+    m_statusLabel->setText(QString("Downloading… %1%").arg(percent));
 }

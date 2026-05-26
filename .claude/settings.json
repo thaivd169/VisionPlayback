@@ -1,7 +1,22 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cmake --build /home/thaivd/TDIC/VisionPlayback/out/build/amd64-debug)"
+      "Bash(cmake --build /home/thaivd/TDIC/VisionPlayback/out/build/amd64-debug)",
+      "Bash(ffmpeg -version)",
+      "Bash(find /home/thaivd/Qt/6.11.0/gcc_64/include/QtHttpServer -name \"*.h\" | head -20)",
+      "Read(//home/thaivd/Qt/6.11.0/gcc_64/include/QtHttpServer/**)",
+      "Bash(ls /home/thaivd/Qt/6.11.0/gcc_64/include/QtHttpServer/ 2>/dev/null | head -30)",
+      "Bash(find /home/thaivd/Qt/6.11.0/gcc_64 -name \"*.h\" | xargs grep -l \"listen\\\\|QTcpServer\" 2>/dev/null | grep -i \"httpserver\\\\|http_server\" | head -10)",
+      "Read(//home/thaivd/Qt/6.11.0/gcc_64/**)",
+      "Bash(ffmpeg -formats)",
+      "Bash(ffmpeg -hide_banner -h muxer=dash)",
+      "Bash(cat > *)",
+      "Bash(cmake --build /home/thaivd/TDIC/VisionPlayback/out/build/amd64-debug --parallel)",
+      "Bash(cmake --build --preset amd64-debug)",
+      "Bash(cmake --build out/build/amd64-debug --parallel)"
+    ],
+    "additionalDirectories": [
+      "/home/thaivd/TDIC/VisionPlayback"
     ]
   }
 }

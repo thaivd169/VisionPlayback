@@ -3,11 +3,10 @@
 #include <QMainWindow>
 #include <QProgressBar>
 #include <QPushButton>
-#include <QThread>
 #include "HCNetSDK.h"
-#include "PlaybackRequest.h"
 
-class DownloadWorker;
+class DashServer;
+class StreamJobManager;
 class VideoPlayerWidget;
 
 class MainWindow : public QMainWindow {
@@ -21,22 +20,22 @@ public:
 private slots:
     void onNewPlaybackClicked();
     void onManagePlaybacksClicked();
-    void onProgressChanged(int percent);
-    void onDownloadFinished(bool success, const QString& errorMsg);
+    void onStreamRequested(int channel, const QString& startTime, const QString& endTime);
+    void onStreamReady(const QString& mpdUrl);
+    void onStreamError(const QString& reason);
+    void onDownloadProgress(int channel, int percent);
 
 private:
-    LONG             m_userId = -1;
-    QString          m_outputPath;
+    LONG m_userId = -1;
 
-    QPushButton*     m_newPlaybackBtn;
-    QPushButton*     m_managePlaybacksBtn;
-    QLabel*          m_statusLabel;
-    QProgressBar*    m_progressBar;
+    QPushButton*      m_newPlaybackBtn;
+    QPushButton*      m_managePlaybacksBtn;
+    QLabel*           m_statusLabel;
+    QProgressBar*     m_progressBar;
     VideoPlayerWidget* m_playerWidget;
 
-    DownloadWorker*  m_worker      = nullptr;
-    QThread*         m_workerThread = nullptr;
+    DashServer*       m_dashServer  = nullptr;
+    StreamJobManager* m_jobManager  = nullptr;
 
     void setupUi();
-    void startWorker(const PlaybackRequest& req);
 };

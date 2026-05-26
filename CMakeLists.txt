@@ -25,7 +25,7 @@ set(TD_3RDPARTY_PATH "${CMAKE_SOURCE_DIR}/../3rdparty")
 list(APPEND CMAKE_PREFIX_PATH "$ENV{HOME}/Qt/6.11.0/gcc_64/lib/cmake/Qt6")
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS
-    Core Widgets Network Concurrent Multimedia MultimediaWidgets)
+    Core Widgets Network Concurrent Multimedia MultimediaWidgets HttpServer)
 message ("[${CMAKE_PROJECT_NAME}] [Qt] version   :   ${QT_VERSION_MAJOR}.${QT_VERSION_MINOR}.${QT_VERSION_PATCH}")
 qt_standard_project_setup()
 
@@ -36,12 +36,16 @@ link_directories(${TD_3RDPARTY_PATH}/HCNetSDK/lib)
 qt_add_executable(VisionPlayback
     main.cpp
     LoginInfo.h
-    LoginDialog.h       LoginDialog.cpp
+    VideoKey.h
+    LoginDialog.h            LoginDialog.cpp
     PlaybackRequest.h
-    PlaybackDialog.h    PlaybackDialog.cpp
-    DownloadWorker.h    DownloadWorker.cpp
-    VideoPlayerWidget.h VideoPlayerWidget.cpp
-    MainWindow.h        MainWindow.cpp
+    PlaybackDialog.h         PlaybackDialog.cpp
+    DownloadWorker.h         DownloadWorker.cpp
+    DashPackager.h           DashPackager.cpp
+    StreamJobManager.h       StreamJobManager.cpp
+    DashServer.h             DashServer.cpp
+    VideoPlayerWidget.h      VideoPlayerWidget.cpp
+    MainWindow.h             MainWindow.cpp
     PlaybackManagerDialog.h  PlaybackManagerDialog.cpp
 )
 
@@ -53,6 +57,7 @@ target_link_libraries(VisionPlayback PRIVATE
     Qt${QT_VERSION_MAJOR}::Concurrent
     Qt${QT_VERSION_MAJOR}::Multimedia
     Qt${QT_VERSION_MAJOR}::MultimediaWidgets
+    Qt${QT_VERSION_MAJOR}::HttpServer
     hcnetsdk
 )
 

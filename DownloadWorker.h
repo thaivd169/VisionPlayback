@@ -7,6 +7,8 @@ class DownloadWorker : public QObject {
 public:
     explicit DownloadWorker(const PlaybackRequest& req, QObject* parent = nullptr);
 
+    const PlaybackRequest& request() const { return m_req; }
+
 public slots:
     void run();
     void cancel();

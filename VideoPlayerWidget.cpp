@@ -82,9 +82,12 @@ VideoPlayerWidget::VideoPlayerWidget(QWidget* parent) : QWidget(parent) {
     });
 }
 
-void VideoPlayerWidget::play(const QString& filePath) {
+void VideoPlayerWidget::play(const QString& filePathOrUrl) {
     m_errorLabel->hide();
-    m_player->setSource(QUrl::fromLocalFile(filePath));
+    const QUrl url = (filePathOrUrl.startsWith("http://") || filePathOrUrl.startsWith("https://"))
+                     ? QUrl(filePathOrUrl)
+                     : QUrl::fromLocalFile(filePathOrUrl);
+    m_player->setSource(url);
     m_player->play();
 }
 
