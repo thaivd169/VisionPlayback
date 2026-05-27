@@ -78,3 +78,7 @@ CMakeUserPresets.json
 *.dll
 *.exe
 
+# VisionPlayback runtime data (auto-regenerated)
+sdkLog/
+downloads/
+

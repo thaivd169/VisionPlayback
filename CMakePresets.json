@@ -38,5 +38,31 @@
                 "LD_LIBRARY_PATH": "${sourceDir}/../3rdparty/HCNetSDK/lib"
             }
         }
+    ],
+    "buildPresets": [
+        {
+            "name": "amd64-debug",
+            "configurePreset": "amd64-debug"
+        },
+        {
+            "name": "amd64-release",
+            "configurePreset": "amd64-release"
+        }
+    ],
+    "workflowPresets": [
+        {
+            "name": "amd64-debug",
+            "steps": [
+                { "type": "configure", "name": "amd64-debug" },
+                { "type": "build",     "name": "amd64-debug" }
+            ]
+        },
+        {
+            "name": "amd64-release",
+            "steps": [
+                { "type": "configure", "name": "amd64-release" },
+                { "type": "build",     "name": "amd64-release" }
+            ]
+        }
     ]
 }
