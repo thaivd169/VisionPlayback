@@ -29,6 +29,10 @@ std::string FileSystemStreamCache::dashDir(const PlaybackKey& key) const {
     return (m_downloadsDir + "/" + QString::fromStdString(key.hex)).toStdString();
 }
 
+void FileSystemStreamCache::deleteMp4(const PlaybackKey& key) {
+    QFile::remove(QString::fromStdString(mp4Path(key)));
+}
+
 std::string FileSystemStreamCache::mpdUrl(const PlaybackKey& key,
                                           std::string_view hostBase) const {
     std::string out;

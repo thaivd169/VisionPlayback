@@ -16,6 +16,7 @@ public:
     std::string dashDir(const PlaybackKey& key) const override;
     std::string mpdUrl(const PlaybackKey& key,
                        std::string_view hostBase) const override;
+    void        deleteMp4(const PlaybackKey& key) override;
 
 private:
     QString m_downloadsDir;

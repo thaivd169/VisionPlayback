@@ -21,4 +21,7 @@ public:
     // Public URL where manifest.mpd is served (hostBase like "http://localhost:8080").
     virtual std::string mpdUrl(const PlaybackKey& key,
                                std::string_view hostBase) const = 0;
+
+    // Delete the intermediate raw mp4 for `key`. No-op if already absent.
+    virtual void deleteMp4(const PlaybackKey& key) = 0;
 };

@@ -130,6 +130,7 @@ void StreamPlaybackUseCase::onPackageFinished(const PlaybackKey& key,
         emitError(key, "DASH packaging failed: " + err);
         return;
     }
+    m_cache->deleteMp4(key);
     emitReady(key, m_cache->mpdUrl(key, m_hostBase));
 }
 
