@@ -56,71 +56,87 @@ when running from a custom working directory.
 
 ## Architecture
 
-Four layers, each a static library with a strict dependency direction
-(see [main/Session.cpp](main/Session.cpp) for the composition root):
+Onion-style Clean Architecture. Four static libraries with a strict dependency
+direction (see [main/Session.cpp](main/Session.cpp) for the composition root):
 
 ```
 main  ─►  vp_adapter  ─►  vp_usecase  ─►  vp_domain
-                      ╲                     ▲
-                       ╲────────────────────┘
-vp_adapter ─► vp_infra
-vp_usecase ─► vp_infra        (PRIVATE — for Sha256 only)
-vp_domain  ─► (nothing)       (header-only INTERFACE library)
+main  ─►  vp_infra ──────────────────────►  vp_domain
 ```
+
+- `vp_domain` is pure C++ and owns the **port interfaces** (`IAuthenticator`,
+  `IPlaybackDownloader`, `IDashPackager`, `IStreamCacheRepository`,
+  `IDispatcher`) and the SHA-256 helper used by `makePlaybackKey`.
+- `vp_usecase` is pure C++ (no Qt) and depends only on `vp_domain`. Async work
+  is exposed via `std::function` callbacks; cross-thread marshalling goes
+  through an injected `IDispatcher`.
+- `vp_infra` implements the domain ports using HCNetSDK, ffmpeg (via
+  `QProcess`), the filesystem, and Qt's event loop (`QtDispatcher`).
+- `vp_adapter` is the **primary-adapter** layer only: HTTP API + console
+  event logger. Its only declared dep is `vp_usecase` — domain types reach
+  it transitively. It does NOT link `vp_infra`.
+- `main` is the composition root; the one place that sees both adapter and
+  infra and wires them together.
 
 ### Layer responsibilities
 
-| Layer        | CMake target | Allowed deps                  | Audit invariant                                                    |
-| ------------ | ------------ | ----------------------------- | ------------------------------------------------------------------ |
-| `src/domain` | `vp_domain`  | std C++ only                  | `grep -rE 'Q[A-Z]\|NET_DVR_\|HCNetSDK' src/domain/` returns empty  |
-| `src/usecase`| `vp_usecase` | `vp_domain`, `Qt::Core`       | `grep -rE 'NET_DVR_\|HCNetSDK\|hcnetsdk' src/usecase/` returns empty |
-| `src/adapter`| `vp_adapter` | usecase, domain, infra, Qt, HCNetSDK, ffmpeg via QProcess | Implements port interfaces declared in `src/usecase/ports/`.       |
-| `src/infra`  | `vp_infra`   | HCNetSDK (PRIVATE)            | Technical foundations: SHA-256, HCNetSDKBootstrap, Config defaults. |
-| `main`       | `VisionPlayback` | adapter, infra            | Holds composition root (`Session`) + 20-line `main.cpp`.            |
+| Layer        | CMake target | Direct link deps                          | Audit grep (must be empty)                          |
+| ------------ | ------------ | ----------------------------------------- | --------------------------------------------------- |
+| `src/domain` | `vp_domain`  | std C++ only                              | `grep -rE 'Q[A-Z]\|NET_DVR_\|HCNetSDK' src/domain/`  |
+| `src/usecase`| `vp_usecase` | `vp_domain` (PUBLIC)                      | `grep -rE 'Q[A-Z]\|NET_DVR_\|HCNetSDK' src/usecase/` |
+| `src/infra`  | `vp_infra`   | `vp_domain` (PUBLIC) + `Qt::Core` (PUBLIC) + HCNetSDK (PRIVATE) | (no rule — infra *is* the technical layer) |
+| `src/adapter`| `vp_adapter` | `vp_usecase` (PUBLIC) + Qt::Core/Network/HttpServer (PUBLIC) | `grep -rE 'NET_DVR_\|HCNetSDK' src/adapter/` |
+| `main`       | `VisionPlayback` | `vp_adapter` + `vp_infra` + Qt        | composition only                                    |
 
-(Comments mentioning `HCNetSDK` are allowed in usecase ports — the audit cares
+Hard prohibitions enforced by CMake:
+- `vp_adapter` must NOT link `vp_infra`.
+- `vp_adapter` must NOT directly link `vp_domain` — it reaches domain only
+  through `vp_usecase`'s PUBLIC link.
+
+(Comments mentioning `HCNetSDK` are allowed everywhere — the audit cares
 about real code.)
 
 ### Pipeline flow
 
 ```
 POST /playback (X-API-Key) ──► ControlApi ──► LoginUseCase ──► IAuthenticator (HCNetSDK)
-                                          └─► StreamPlaybackUseCase ─► IPlaybackDownloader (HCNetSDK)
-                                                                       IDashPackager     (ffmpeg)
+                                          └─► StreamPlaybackUseCase ─► IPlaybackDownloader (HCNetSDK, own thread)
+                                                                       IDashPackager     (ffmpeg / QProcess)
                                                                        IStreamCacheRepository (FS)
+                                                                       IDispatcher       (thread-hop)
 GET  /playback?id=<hash>   ──► PollingApi  ──► (read-only state lookup)
 GET  /dash/<hash>/*        ──► DashFileServer ─► downloads/<hash>/*
-                                               ConsoleEventLogger ◄── use-case signals
+                                               ConsoleEventLogger ◄── use-case callbacks
 ```
 
 ### Key files
 
 | File                                              | Role                                                                                                |
 | ------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `src/domain/PlaybackKey.h`                        | 16-hex-char SHA-256 truncation. Cache key + public id in the polling URL.                           |
-| `src/domain/PlaybackTime.h`                       | Qt-free calendar struct (mirrors `NET_DVR_TIME` shape). Parses `"YYYYMMDDTHHMMSS"`.                 |
+| `src/domain/PlaybackKey.h`                        | 16-hex-char SHA-256 truncation + inline `makePlaybackKey(Credentials, Channel, TimeRange)`.         |
+| `src/domain/PlaybackTime.h`                       | Calendar struct (mirrors `NET_DVR_TIME` shape). Parses `"YYYYMMDDTHHMMSS"`.                         |
 | `src/domain/PlaybackRequest.h`                    | `SessionToken token; Channel channel; TimeRange range; PlaybackKey key;`                            |
-| `src/domain/Credentials.h`                        | Pure `std::string` fields (no `NAME_LEN` macros).                                                   |
+| `src/domain/Credentials.h`                        | Pure `std::string` fields.                                                                          |
 | `src/domain/CameraIdentity.h`                     | `(ip, port, user)` tuple — login-cache key in `LoginUseCase`.                                       |
-| `src/usecase/StreamPlaybackUseCase.h/.cpp`        | Cache-first state machine. Emits `streamReady(PlaybackKey, url)`, `streamError`, `downloadProgress`. |
-| `src/usecase/LoginUseCase.h/.cpp`                 | Cache-first SDK login keyed by `CameraIdentity`. Idle eviction via `QTimer`.                        |
-| `src/usecase/ports/I{PlaybackDownloader,DashPackager,StreamCacheRepository,Authenticator}.h` | Port interfaces. Async ones inherit `QObject`, sync ones don't.       |
-| `src/usecase/PlaybackKeyFactory.h/.cpp`           | `makePlaybackKey(Credentials, Channel, TimeRange)` → 16-hex `PlaybackKey`.                          |
-| `src/adapter/dvr/HCNetSDKDownloader.h/.cpp`       | `IPlaybackDownloader` impl. `NET_DVR_GetFileByTime_V40` + RPC polling. Per-job `QThread`-friendly.   |
-| `src/adapter/dvr/HCNetSDKAuthenticator.h/.cpp`    | `IAuthenticator` impl. Wraps `NET_DVR_Login_V40` / `NET_DVR_Logout_V30`.                            |
-| `src/adapter/dvr/HCNetSDKTimeMapper.h`            | The only file that names both `NET_DVR_TIME` and `PlaybackTime`.                                    |
-| `src/adapter/packaging/FfmpegDashPackager.h/.cpp` | `IDashPackager` impl. `ffmpeg -f dash` via `QProcess`.                                              |
-| `src/adapter/persistence/FileSystemStreamCache.h/.cpp` | `IStreamCacheRepository` impl. Owns `downloads/<hash>.mp4` + `downloads/<hash>/manifest.mpd`. |
+| `src/domain/Sha256.{h,cpp}`                       | Compact SHA-256 used by `makePlaybackKey`.                                                          |
+| `src/domain/I{Authenticator,PlaybackDownloader,DashPackager,StreamCacheRepository,Dispatcher}.h` | Qt-free port interfaces. Async ones expose `std::function` callbacks. |
+| `src/usecase/StreamPlaybackUseCase.h/.cpp`        | Cache-first pipeline (Qt-free). Emits `onStreamReady / onStreamError / onDownloadProgress` callbacks. |
+| `src/usecase/LoginUseCase.h/.cpp`                 | Cache-first SDK login (Qt-free). Sweep-on-access idle eviction.                                     |
+| `src/infra/dvr/HCNetSDKDownloader.h/.cpp`         | `IPlaybackDownloader` impl. Owns its own `std::thread`; SDK polling.                                |
+| `src/infra/dvr/HCNetSDKAuthenticator.h/.cpp`      | `IAuthenticator` impl. Wraps `NET_DVR_Login_V40` / `NET_DVR_Logout_V30`.                            |
+| `src/infra/dvr/HCNetSDKTimeMapper.h`              | The only file that names both `NET_DVR_TIME` and `PlaybackTime`.                                    |
+| `src/infra/packaging/FfmpegDashPackager.h/.cpp`   | `IDashPackager` impl. `ffmpeg -f dash` via `QProcess`.                                              |
+| `src/infra/persistence/FileSystemStreamCache.h/.cpp` | `IStreamCacheRepository` impl. Owns `downloads/<hash>.mp4` + `downloads/<hash>/manifest.mpd`.    |
+| `src/infra/dispatcher/QtDispatcher.h/.cpp`        | `IDispatcher` impl. Bounces callbacks onto the main thread via `QMetaObject::invokeMethod`.         |
+| `src/infra/HCNetSDKBootstrap.{h,cpp}`             | RAII for `NET_DVR_Init` + `NET_DVR_Cleanup`.                                                        |
+| `src/infra/Config.h`                              | `kDefaultApiKey`, `kDefaultPort`, `kDefaultLoginIdleSeconds`.                                       |
 | `src/adapter/http/ControlApi.{h,cpp}`             | `POST /playback` — API-key check, login, dispatch, return poll URL.                                  |
 | `src/adapter/http/PollingApi.{h,cpp}`             | `GET /playback?id=<hash>` — read-only status lookup.                                                |
 | `src/adapter/http/DashFileServer.{h,cpp}`         | `GET /dash/<hash>/*` — static MPD + segment delivery.                                               |
 | `src/adapter/http/ApiKeyGuard.{h,cpp}`            | Constant-time `X-API-Key` comparator.                                                               |
 | `src/adapter/http/JsonCodec.{h,cpp}`              | Confines all `QJson*` ↔ domain conversions to one file.                                             |
-| `src/adapter/console/ConsoleEventLogger.{h,cpp}`  | Passive subscriber to use-case signals; prints tagged stdout/stderr lines.                          |
-| `src/infra/HCNetSDKBootstrap.{h,cpp}`             | RAII for `NET_DVR_Init` + `NET_DVR_Cleanup`.                                                        |
-| `src/infra/Sha256.{h,cpp}`                        | Compact public-domain SHA-256 (`sha256_hex(std::string_view)`).                                     |
-| `src/infra/Config.h`                              | `kDefaultApiKey`, `kDefaultPort`, `kDefaultLoginIdleSeconds`.                                       |
-| `main/Session.h/.cpp`                             | Composition root. Parses CLI, builds adapters → use cases → APIs, registers routes.                  |
+| `src/adapter/console/ConsoleEventLogger.{h,cpp}`  | Passive subscriber that registers lambdas via the use cases' callback setters.                      |
+| `main/Session.h/.cpp`                             | Composition root. Parses CLI, builds infra → use cases → primary adapters, registers routes.        |
 | `main/main.cpp`                                   | 25-line entry point: `--version`, construct `QCoreApplication`, construct `Session`, `app.exec()`.   |
 
 ### DASH cache layout
@@ -142,16 +158,17 @@ previous crash.
 
 - `StreamPlaybackUseCase`, `LoginUseCase`, all HTTP route handlers, and
   `ConsoleEventLogger` all live on the **main thread**.
-- Per-job `IPlaybackDownloader` workers (concrete: `HCNetSDKDownloader`) are
-  `moveToThread()`-ed onto a dedicated `QThread`. Their signals reach the
-  use case via `Qt::QueuedConnection` (auto-detected by thread affinity).
-- After `onDownloadFinished()` succeeds, `job.thread` is cleared to `nullptr`
-  immediately — the thread self-destructs via its `deleteLater` connections.
-  Do not access `job.thread` after this point.
+- `HCNetSDKDownloader` owns its own `std::thread`; `start()` spawns it,
+  `cancel()` flips an `std::atomic<bool>` the worker polls, and the
+  destructor joins the thread. The use case wraps the worker's callbacks
+  with `IDispatcher::post(...)` so all state mutations happen on the
+  main thread.
+- `FfmpegDashPackager` runs the ffmpeg `QProcess` on the calling thread
+  (main); its callback fires on the same thread but is still routed through
+  `IDispatcher::post` for symmetry.
 - `LoginUseCase::ensureLoggedIn()` is **synchronous** and runs on the HTTP
-  handler's thread (the main thread). Login is fast enough that this hasn't
-  required dispatch to a worker thread; if blocking becomes a concern, wrap
-  with a one-shot `QThread`.
+  handler's thread (the main thread). Idle eviction is **sweep-on-access**
+  — no timer thread.
 
 ---
 
@@ -221,14 +238,15 @@ requests) before any non-development deployment.
 ## Coding Conventions
 
 - **Member variables**: `m_` prefix (e.g., `m_streamUseCase`, `m_cache`).
-- **Slots**: `on<Subject><Verb>` (e.g., `onDownloadFinished`, `onStreamReady`).
+- **Callback setters / handlers**: `on<Subject><Verb>` (e.g., `onStreamReady`,
+  `onDownloadFinished`). Use cases expose `void on<Event>(std::function<...>)`
+  setters that append to a subscriber vector.
 - **Header guards**: `#pragma once`.
-- **Signals/slots**: new-style `connect()` with pointer-to-member.
 - **C++ standard**: C++20.
-- **Domain types**: `std::string`, `std::uint16_t`, plain structs — **never**
-  `QString`/`QByteArray`/`NET_DVR_*` inside `src/domain/`.
+- **Domain and usecase**: pure C++ only — **never** `QString`/`QByteArray`/
+  `QObject`/`NET_DVR_*` in `src/domain/` or `src/usecase/`.
 - **HCNetSDK types** (`LONG`, `NET_DVR_TIME`, `DWORD`) are confined to
-  `src/adapter/dvr/` and `src/infra/`.
+  `src/infra/dvr/`.
 - **No comments** unless the WHY is non-obvious.
 
 ---
@@ -295,8 +313,14 @@ exist) and by these mechanical greps:
 # domain must be Qt- and SDK-free (comments aside)
 grep -rE 'Q[A-Z]|NET_DVR_|HCNetSDK' src/domain/
 
-# usecase must be SDK-free
-grep -rE 'NET_DVR_|HCNetSDK|hcnetsdk' src/usecase/
+# usecase must be Qt- AND SDK-free (Qt was removed in the Onion refactor)
+grep -rE 'Q[A-Z]|NET_DVR_|HCNetSDK' src/usecase/
+
+# adapter must be SDK-free (concrete HCNetSDK code lives in src/infra/dvr/)
+grep -rE 'NET_DVR_|HCNetSDK' src/adapter/
+
+# adapter must not directly link vp_domain (reaches it transitively via usecase)
+grep -E 'target_link_libraries.*vp_domain' src/adapter/CMakeLists.txt
 ```
 
-Both should produce only comment lines, never real code references.
+All four should produce only comment lines, never real code references.

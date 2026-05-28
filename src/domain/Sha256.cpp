@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <cstring>
 
-namespace vp::infra {
 namespace {
 
 constexpr std::uint32_t kK[64] = {
@@ -109,5 +108,3 @@ std::string sha256_hex(std::string_view input) {
     }
     return out;
 }
-
-} // namespace vp::infra

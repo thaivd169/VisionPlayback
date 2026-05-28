@@ -12,7 +12,7 @@
 
 PollingApi::PollingApi(StreamPlaybackUseCase*  streamUseCase,
                        IStreamCacheRepository* cache,
-                       QString                 hostBase,
+                       std::string             hostBase,
                        QObject*                parent)
     : QObject(parent),
       m_streamUseCase(streamUseCase),
@@ -40,7 +40,7 @@ QHttpServerResponse PollingApi::handleGet(const QHttpServerRequest& req) {
 
     switch (status) {
         case StreamStatus::Ready: {
-            const std::string url = m_cache->mpdUrl(key, m_hostBase.toStdString());
+            const std::string url = m_cache->mpdUrl(key, m_hostBase);
             return QHttpServerResponse("application/json",
                                        JsonCodec::serializePollResponseReady(url),
                                        QHttpServerResponse::StatusCode::Ok);

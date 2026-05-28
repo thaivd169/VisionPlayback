@@ -4,8 +4,7 @@
 
 #include "PlaybackKey.h"
 
-// Synchronous on-disk cache lookup. Implemented in
-// adapter/persistence/FileSystemStreamCache.
+// Synchronous on-disk cache lookup port.
 class IStreamCacheRepository {
 public:
     virtual ~IStreamCacheRepository() = default;

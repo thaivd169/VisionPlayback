@@ -8,14 +8,14 @@
 #include "ApiKeyGuard.h"
 #include "JsonCodec.h"
 #include "LoginUseCase.h"
-#include "PlaybackKeyFactory.h"
+#include "PlaybackKey.h"
 #include "PlaybackRequest.h"
 #include "StreamPlaybackUseCase.h"
 
 ControlApi::ControlApi(ApiKeyGuard*           guard,
                        LoginUseCase*          loginUseCase,
                        StreamPlaybackUseCase* streamUseCase,
-                       QString                hostBase,
+                       std::string            hostBase,
                        QObject*               parent)
     : QObject(parent),
       m_guard(guard),
@@ -31,7 +31,6 @@ void ControlApi::registerRoutes(QHttpServer& server) {
 }
 
 QHttpServerResponse ControlApi::handlePost(const QHttpServerRequest& req) {
-    // X-API-Key
     const QByteArray providedKey = req.headers().value(QByteArrayLiteral("X-API-Key")).toByteArray();
     if (!m_guard->validate(providedKey)) {
         return QHttpServerResponse("application/json",
@@ -39,7 +38,6 @@ QHttpServerResponse ControlApi::handlePost(const QHttpServerRequest& req) {
                                    QHttpServerResponse::StatusCode::Unauthorized);
     }
 
-    // Parse body
     QString missingField;
     const auto parsed = JsonCodec::parsePlaybackPostBody(req.body(), &missingField);
     if (!parsed) {
@@ -49,12 +47,10 @@ QHttpServerResponse ControlApi::handlePost(const QHttpServerRequest& req) {
                                    QHttpServerResponse::StatusCode::BadRequest);
     }
 
-    // Compute the cache key
     const PlaybackKey key = makePlaybackKey(parsed->credentials,
                                             parsed->channel,
                                             parsed->range);
 
-    // Cache-first login
     const SessionToken token = m_loginUseCase->ensureLoggedIn(parsed->credentials);
     if (token < 0) {
         return QHttpServerResponse("application/json",
@@ -64,7 +60,6 @@ QHttpServerResponse ControlApi::handlePost(const QHttpServerRequest& req) {
                                    QHttpServerResponse::StatusCode::BadGateway);
     }
 
-    // Dispatch the pipeline (no-op on cache hit / job already in flight)
     PlaybackRequest pr;
     pr.token   = token;
     pr.channel = parsed->channel;
@@ -72,7 +67,7 @@ QHttpServerResponse ControlApi::handlePost(const QHttpServerRequest& req) {
     pr.key     = key;
     m_streamUseCase->requestStream(pr);
 
-    const std::string pollUrl = m_hostBase.toStdString() + "/playback?id=" + key.hex;
+    const std::string pollUrl = m_hostBase + "/playback?id=" + key.hex;
     return QHttpServerResponse("application/json",
                                JsonCodec::serializePollUrl(pollUrl),
                                QHttpServerResponse::StatusCode::Ok);

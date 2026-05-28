@@ -1,6 +1,6 @@
 #pragma once
 
-enum class StreamStatus {
+enum class StreamStatus : unsigned char {
     Unknown,      // no record of the key — caller never asked for it
     Pending,      // queued but not started
     Downloading,  // raw mp4 transfer in progress

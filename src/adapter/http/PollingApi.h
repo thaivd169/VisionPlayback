@@ -1,7 +1,7 @@
 #pragma once
 #include <QHttpServer>
 #include <QObject>
-#include <QString>
+#include <string>
 
 class IStreamCacheRepository;
 class StreamPlaybackUseCase;
@@ -13,7 +13,7 @@ class PollingApi : public QObject {
 public:
     PollingApi(StreamPlaybackUseCase*  streamUseCase,
                IStreamCacheRepository* cache,
-               QString                 hostBase,
+               std::string             hostBase,
                QObject*                parent = nullptr);
 
     void registerRoutes(QHttpServer& server);
@@ -23,5 +23,5 @@ private:
 
     StreamPlaybackUseCase*  m_streamUseCase;
     IStreamCacheRepository* m_cache;
-    QString                 m_hostBase;
+    std::string             m_hostBase;
 };

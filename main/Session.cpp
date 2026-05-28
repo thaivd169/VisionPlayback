@@ -5,6 +5,7 @@
 #include <QHostAddress>
 #include <QHttpHeaders>
 #include <QString>
+#include <chrono>
 #include <iostream>
 
 #include "Config.h"
@@ -17,7 +18,7 @@ bool parseUInt16(const QString& s, quint16& out) {
     out = static_cast<quint16>(v);
     return true;
 }
-} // namespace
+}  // namespace
 
 Session::Session(int argc, char* argv[], QObject* parent)
     : QObject(parent),
@@ -28,35 +29,36 @@ Session::Session(int argc, char* argv[], QObject* parent)
       m_loginIdleSec(vp::infra::kDefaultLoginIdleSeconds),
       m_hcnetsdk("./sdkLog/") {
     parseArgs(argc, argv);
-
     QDir().mkpath(m_downloadsDir);
+    const std::string hostBase =
+        std::string("http://localhost:") + std::to_string(m_port);
 
-    const QString hostBase = QStringLiteral("http://localhost:%1").arg(m_port);
+    // Infrastructure construction
+    m_dispatcher = std::make_unique<QtDispatcher>(this);
+    m_cache = std::make_unique<FileSystemStreamCache>(m_downloadsDir);
 
-    m_cache         = std::make_unique<FileSystemStreamCache>(m_downloadsDir);
-    m_loginUseCase  = std::make_unique<LoginUseCase>(&m_authenticator,
-                                                     std::chrono::seconds(m_loginIdleSec),
-                                                     this);
+    // Usecase construction
+    m_loginUseCase = std::make_unique<LoginUseCase>(&m_authenticator,
+                                                    std::chrono::seconds(m_loginIdleSec));
     m_streamUseCase = std::make_unique<StreamPlaybackUseCase>(m_cache.get(),
                                                               &m_downloaderFactory,
                                                               &m_packagerFactory,
-                                                              hostBase,
-                                                              this);
+                                                              m_dispatcher.get(),
+                                                              hostBase);
 
-    m_apiKeyGuard   = std::make_unique<ApiKeyGuard>(m_apiKey.toStdString());
-
-    m_controlApi     = std::make_unique<ControlApi>(m_apiKeyGuard.get(),
-                                                    m_loginUseCase.get(),
-                                                    m_streamUseCase.get(),
-                                                    hostBase,
-                                                    this);
-    m_pollingApi     = std::make_unique<PollingApi>(m_streamUseCase.get(),
-                                                    m_cache.get(),
-                                                    hostBase,
-                                                    this);
+    // Adapter construction
+    m_apiKeyGuard = std::make_unique<ApiKeyGuard>(m_apiKey.toStdString());
+    m_controlApi = std::make_unique<ControlApi>(m_apiKeyGuard.get(),
+                                                m_loginUseCase.get(),
+                                                m_streamUseCase.get(),
+                                                hostBase,
+                                                this);
+    m_pollingApi = std::make_unique<PollingApi>(m_streamUseCase.get(),
+                                                m_cache.get(),
+                                                hostBase,
+                                                this);
     m_dashFileServer = std::make_unique<DashFileServer>(m_downloadsDir, this);
-
-    m_eventLogger    = std::make_unique<ConsoleEventLogger>(this);
+    m_eventLogger = std::make_unique<ConsoleEventLogger>();
     m_eventLogger->subscribeTo(m_streamUseCase.get());
     m_eventLogger->subscribeTo(m_loginUseCase.get());
 }
@@ -73,13 +75,13 @@ bool Session::start() {
 
     // Shared CORS middleware.
     m_httpServer.addAfterRequestHandler(this,
-        [](const QHttpServerRequest&, QHttpServerResponse& resp) {
-            auto headers = resp.headers();
-            headers.append(QHttpHeaders::WellKnownHeader::AccessControlAllowOrigin, "*");
-            headers.append(QHttpHeaders::WellKnownHeader::AccessControlAllowMethods, "GET, POST, OPTIONS");
-            headers.append(QHttpHeaders::WellKnownHeader::AccessControlAllowHeaders, "Content-Type, X-API-Key");
-            resp.setHeaders(headers);
-        });
+                                        [](const QHttpServerRequest&, QHttpServerResponse& resp) {
+                                            auto headers = resp.headers();
+                                            headers.append(QHttpHeaders::WellKnownHeader::AccessControlAllowOrigin, "*");
+                                            headers.append(QHttpHeaders::WellKnownHeader::AccessControlAllowMethods, "GET, POST, OPTIONS");
+                                            headers.append(QHttpHeaders::WellKnownHeader::AccessControlAllowHeaders, "Content-Type, X-API-Key");
+                                            resp.setHeaders(headers);
+                                        });
 
     m_controlApi->registerRoutes(m_httpServer);
     m_pollingApi->registerRoutes(m_httpServer);

@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------------------
-# vp_adapter — implements ports + speaks to the outside world (HTTP, HCNetSDK,
-# ffmpeg, filesystem, console). Single static lib aggregating all adapter
-# subfolders.
+# vp_adapter — primary-adapter layer. HTTP API + console event logger.
+# Drives the use cases; does NOT touch HCNetSDK / ffmpeg / the filesystem
+# (those are infra concerns).
 #
-# HCNetSDK include path is PRIVATE; the library is linked via absolute path
-# so consumers (main) don't need to inherit `-L` flags.
+# Direct dep is vp_usecase only — domain types reach this code transitively
+# through vp_usecase's PUBLIC link. Qt::Network/HttpServer is PRIVATE since
+# only the route classes need them. Audit invariant:
+#     grep -rE 'NET_DVR_|HCNetSDK' src/adapter/
+# must return empty.
 #----------------------------------------------------------------------------------
 qt_add_library(vp_adapter STATIC
     http/ControlApi.h               http/ControlApi.cpp
@@ -13,26 +16,18 @@ qt_add_library(vp_adapter STATIC
     http/ApiKeyGuard.h              http/ApiKeyGuard.cpp
     http/JsonCodec.h                http/JsonCodec.cpp
     console/ConsoleEventLogger.h    console/ConsoleEventLogger.cpp
-    dvr/HCNetSDKDownloader.h        dvr/HCNetSDKDownloader.cpp
-    dvr/HCNetSDKAuthenticator.h     dvr/HCNetSDKAuthenticator.cpp
-    dvr/HCNetSDKTimeMapper.h
-    packaging/FfmpegDashPackager.h  packaging/FfmpegDashPackager.cpp
-    persistence/FileSystemStreamCache.h  persistence/FileSystemStreamCache.cpp
 )
-target_include_directories(vp_adapter
-    PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}
-            ${CMAKE_CURRENT_SOURCE_DIR}/http
-            ${CMAKE_CURRENT_SOURCE_DIR}/console
-            ${CMAKE_CURRENT_SOURCE_DIR}/dvr
-            ${CMAKE_CURRENT_SOURCE_DIR}/packaging
-            ${CMAKE_CURRENT_SOURCE_DIR}/persistence
-    PRIVATE ${TD_3RDPARTY_PATH}/HCNetSDK/incEn
+target_include_directories(vp_adapter PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/http
+    ${CMAKE_CURRENT_SOURCE_DIR}/console
 )
 target_link_libraries(vp_adapter
-    PUBLIC  vp_usecase vp_domain
+    PUBLIC  vp_usecase
+            # Qt headers leak into adapter's public headers (QObject in
+            # ControlApi/PollingApi/DashFileServer, QHttpServer in the route
+            # registrars, QByteArray in ApiKeyGuard), so these must be PUBLIC.
             Qt${QT_VERSION_MAJOR}::Core
             Qt${QT_VERSION_MAJOR}::Network
             Qt${QT_VERSION_MAJOR}::HttpServer
-    PRIVATE vp_infra
-            ${TD_3RDPARTY_PATH}/HCNetSDK/lib/libhcnetsdk.so
 )

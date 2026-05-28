@@ -13,7 +13,14 @@
       "Bash(cat > *)",
       "Bash(cmake --build /home/thaivd/TDIC/VisionPlayback/out/build/amd64-debug --parallel)",
       "Bash(cmake --build --preset amd64-debug)",
-      "Bash(cmake --build out/build/amd64-debug --parallel)"
+      "Bash(cmake --build out/build/amd64-debug --parallel)",
+      "Bash(LD_LIBRARY_PATH=/home/thaivd/TDIC/3rdparty/HCNetSDK/lib timeout 3 ./out/build/amd64-debug/main/VisionPlayback --port=18080 --api-key=test-key --downloads-dir=/tmp/vp-test-downloads)",
+      "Bash(LD_LIBRARY_PATH=/home/thaivd/TDIC/3rdparty/HCNetSDK/lib timeout 3 /home/thaivd/TDIC/VisionPlayback/out/build/amd64-debug/main/VisionPlayback --port=18080 --api-key=test-key)",
+      "Bash(LD_LIBRARY_PATH=/home/thaivd/TDIC/3rdparty/HCNetSDK/lib timeout 3 stdbuf -o0 -e0 ./out/build/amd64-debug/main/VisionPlayback --port=18080 --api-key=test-key)",
+      "Bash(LD_LIBRARY_PATH=/home/thaivd/TDIC/3rdparty/HCNetSDK/lib timeout 2 ./main/VisionPlayback --port=18082 --api-key=test-key)",
+      "Bash(echo \"after-exit=$?\")",
+      "Bash(LD_LIBRARY_PATH=/home/thaivd/TDIC/3rdparty/HCNetSDK/lib timeout 2 ./main/VisionPlayback --port=18084 --api-key=test-key)",
+      "Bash(LD_LIBRARY_PATH=/home/thaivd/TDIC/3rdparty/HCNetSDK/lib timeout 2 ./main/VisionPlayback --port=18085 --api-key=test-key)"
     ],
     "additionalDirectories": [
       "/home/thaivd/TDIC/VisionPlayback"

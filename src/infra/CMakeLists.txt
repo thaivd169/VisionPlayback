@@ -1,18 +1,38 @@
 #----------------------------------------------------------------------------------
-# vp_infra — technical foundations, no business meaning.
-# Owns RAII wrappers around third-party C APIs (HCNetSDK init/cleanup) and
-# small standalone utilities (SHA-256). The HCNetSDK link is via an absolute
-# path so consumers don't need to learn about -L flags.
+# vp_infra — secondary-adapter layer. Implements the domain port interfaces
+# using HCNetSDK (DVR auth + downloader), ffmpeg via QProcess (DASH packager),
+# the filesystem (stream cache), and a Qt-event-loop dispatcher.
+#
+# Also hosts technical foundations: HCNetSDKBootstrap (RAII init/cleanup) and
+# Config (default constants).
+#
+# Depends on vp_domain (PUBLIC — port headers + value types) and Qt::Core
+# (PRIVATE — QProcess, QFile, QMetaObject::invokeMethod). HCNetSDK is linked
+# via absolute path so consumers don't inherit -L flags.
 #----------------------------------------------------------------------------------
-add_library(vp_infra STATIC
-    HCNetSDKBootstrap.h  HCNetSDKBootstrap.cpp
-    Sha256.h             Sha256.cpp
+qt_add_library(vp_infra STATIC
+    HCNetSDKBootstrap.h    HCNetSDKBootstrap.cpp
+    Config.h
+    dvr/HCNetSDKAuthenticator.h         dvr/HCNetSDKAuthenticator.cpp
+    dvr/HCNetSDKDownloader.h            dvr/HCNetSDKDownloader.cpp
+    dvr/HCNetSDKTimeMapper.h
+    packaging/FfmpegDashPackager.h      packaging/FfmpegDashPackager.cpp
+    persistence/FileSystemStreamCache.h persistence/FileSystemStreamCache.cpp
+    dispatcher/QtDispatcher.h           dispatcher/QtDispatcher.cpp
 )
 target_include_directories(vp_infra
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/dvr
+            ${CMAKE_CURRENT_SOURCE_DIR}/packaging
+            ${CMAKE_CURRENT_SOURCE_DIR}/persistence
+            ${CMAKE_CURRENT_SOURCE_DIR}/dispatcher
     PRIVATE ${TD_3RDPARTY_PATH}/HCNetSDK/incEn
 )
 target_link_libraries(vp_infra
+    PUBLIC  vp_domain
+            # Qt::Core is PUBLIC because QtDispatcher.h has Q_OBJECT and
+            # FileSystemStreamCache's constructor takes QString.
+            Qt${QT_VERSION_MAJOR}::Core
     PRIVATE ${TD_3RDPARTY_PATH}/HCNetSDK/lib/libhcnetsdk.so
 )
 target_compile_features(vp_infra PUBLIC cxx_std_20)

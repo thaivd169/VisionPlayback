@@ -1,7 +1,7 @@
 #pragma once
 #include <QHttpServer>
 #include <QObject>
-#include <QString>
+#include <string>
 
 class ApiKeyGuard;
 class LoginUseCase;
@@ -13,11 +13,11 @@ class StreamPlaybackUseCase;
 class ControlApi : public QObject {
     Q_OBJECT
 public:
-    ControlApi(ApiKeyGuard*          guard,
-               LoginUseCase*         loginUseCase,
+    ControlApi(ApiKeyGuard*           guard,
+               LoginUseCase*          loginUseCase,
                StreamPlaybackUseCase* streamUseCase,
-               QString               hostBase,
-               QObject*              parent = nullptr);
+               std::string            hostBase,
+               QObject*               parent = nullptr);
 
     void registerRoutes(QHttpServer& server);
 
@@ -27,5 +27,5 @@ private:
     ApiKeyGuard*           m_guard;
     LoginUseCase*          m_loginUseCase;
     StreamPlaybackUseCase* m_streamUseCase;
-    QString                m_hostBase;
+    std::string            m_hostBase;
 };
