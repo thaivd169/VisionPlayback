@@ -1,14 +1,11 @@
 #include "DashFileServer.h"
 
 #include <QByteArray>
-#include <QDateTime>
 #include <QFile>
 #include <QHttpServerRequest>
 #include <QHttpServerResponse>
 #include <QIODevice>
 #include <utility>
-
-static constexpr qint64 kActiveStreamingGraceMs = 30LL * 1000;
 
 DashFileServer::DashFileServer(QString downloadsDir, QObject* parent)
     : QObject(parent), m_downloadsDir(std::move(downloadsDir)) {}
@@ -17,21 +14,11 @@ void DashFileServer::registerRoutes(QHttpServer& server) {
     server.route("/dash/<arg>/<arg>", QHttpServerRequest::Method::Get, this,
                  [this](const QString& key, const QString& file,
                         const QHttpServerRequest&) {
+                     emit keyAccessStarted(key);
                      auto response = serveStaticFile(key + "/" + file);
-                     if (response.statusCode() == QHttpServerResponse::StatusCode::Ok)
-                         m_lastAccessMs[key] = QDateTime::currentMSecsSinceEpoch();
+                     emit keyAccessEnded(key);
                      return response;
                  });
-}
-
-std::vector<PlaybackKey> DashFileServer::activeKeys() const {
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    std::vector<PlaybackKey> result;
-    for (auto it = m_lastAccessMs.constBegin(); it != m_lastAccessMs.constEnd(); ++it) {
-        if (now - it.value() <= kActiveStreamingGraceMs)
-            result.push_back(PlaybackKey{it.key().toStdString()});
-    }
-    return result;
 }
 
 QHttpServerResponse DashFileServer::serveStaticFile(const QString& relativePath) {

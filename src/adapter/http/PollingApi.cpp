@@ -8,14 +8,11 @@
 #include "IStreamCacheRepository.h"
 #include "JsonCodec.h"
 #include "PlaybackKey.h"
-#include "StreamPlaybackUseCase.h"
 
-PollingApi::PollingApi(StreamPlaybackUseCase*  streamUseCase,
-                       IStreamCacheRepository* cache,
+PollingApi::PollingApi(IStreamCacheRepository* cache,
                        std::string             hostBase,
                        QObject*                parent)
     : QObject(parent),
-      m_streamUseCase(streamUseCase),
       m_cache(cache),
       m_hostBase(std::move(hostBase)) {}
 
@@ -24,6 +21,10 @@ void PollingApi::registerRoutes(QHttpServer& server) {
                  [this](const QHttpServerRequest& req) {
                      return handleGet(req);
                  });
+}
+
+void PollingApi::onStatusChanged(QString keyHex, StreamStatus status) {
+    m_statusCache.insert(keyHex, status);
 }
 
 QHttpServerResponse PollingApi::handleGet(const QHttpServerRequest& req) {
@@ -35,11 +36,11 @@ QHttpServerResponse PollingApi::handleGet(const QHttpServerRequest& req) {
                                    QHttpServerResponse::StatusCode::BadRequest);
     }
 
-    const PlaybackKey key{ idParam.toStdString() };
-    const StreamStatus status = m_streamUseCase->currentStatus(key);
+    const StreamStatus status = m_statusCache.value(idParam, StreamStatus::Unknown);
 
     switch (status) {
         case StreamStatus::Ready: {
+            const PlaybackKey key{ idParam.toStdString() };
             const std::string url = m_cache->mpdUrl(key, m_hostBase);
             return QHttpServerResponse("application/json",
                                        JsonCodec::serializePollResponseReady(url),

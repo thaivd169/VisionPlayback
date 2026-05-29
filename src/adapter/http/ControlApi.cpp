@@ -1,27 +1,19 @@
 #include "ControlApi.h"
 
-#include <QHttpHeaders>
 #include <QHttpServerRequest>
 #include <QHttpServerResponse>
 #include <utility>
 
 #include "ApiKeyGuard.h"
 #include "JsonCodec.h"
-#include "LoginUseCase.h"
 #include "PlaybackKey.h"
-#include "PlaybackRequest.h"
-#include "StreamPlaybackUseCase.h"
 
-ControlApi::ControlApi(ApiKeyGuard*           guard,
-                       LoginUseCase*          loginUseCase,
-                       StreamPlaybackUseCase* streamUseCase,
-                       std::string            hostBase,
-                       const IHasher*         hasher,
-                       QObject*               parent)
+ControlApi::ControlApi(ApiKeyGuard*   guard,
+                       std::string    hostBase,
+                       const IHasher* hasher,
+                       QObject*       parent)
     : QObject(parent),
       m_guard(guard),
-      m_loginUseCase(loginUseCase),
-      m_streamUseCase(streamUseCase),
       m_hostBase(std::move(hostBase)),
       m_hasher(hasher) {}
 
@@ -54,21 +46,12 @@ QHttpServerResponse ControlApi::handlePost(const QHttpServerRequest& req) {
                                             parsed->range,
                                             *m_hasher);
 
-    const SessionToken token = m_loginUseCase->ensureLoggedIn(parsed->credentials);
-    if (token < 0) {
-        return QHttpServerResponse("application/json",
-                                   JsonCodec::serializeError(
-                                       QStringLiteral("login failed: %1")
-                                           .arg(m_loginUseCase->lastErrorCode())),
-                                   QHttpServerResponse::StatusCode::BadGateway);
-    }
-
     PlaybackRequest pr;
-    pr.token   = token;
-    pr.channel = parsed->channel;
-    pr.range   = parsed->range;
-    pr.key     = key;
-    m_streamUseCase->requestStream(pr);
+    pr.credentials = parsed->credentials;
+    pr.channel     = parsed->channel;
+    pr.range       = parsed->range;
+    pr.key         = key;
+    emit playbackRequested(pr);
 
     const std::string pollUrl = m_hostBase + "/playback?id=" + key.hex;
     return QHttpServerResponse("application/json",

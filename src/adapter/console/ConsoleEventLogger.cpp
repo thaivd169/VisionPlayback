@@ -1,25 +1,26 @@
 #include "ConsoleEventLogger.h"
 
 #include <iostream>
-#include <string>
 
 #include "LoginUseCase.h"
-#include "PlaybackKey.h"
-#include "StreamPlaybackUseCase.h"
+#include "PlaybackProcessor.h"
 
-void ConsoleEventLogger::subscribeTo(StreamPlaybackUseCase* streamUseCase) {
-    streamUseCase->onStreamReady([](const PlaybackKey& key, std::string url) {
-        std::cout << "[stream-ready] hash=" << key.hex
-                  << " url=" << url << std::endl;
-    });
-    streamUseCase->onStreamError([](const PlaybackKey& key, std::string reason) {
-        std::cerr << "[stream-error] hash=" << key.hex
-                  << " reason=" << reason << std::endl;
-    });
-    streamUseCase->onDownloadProgress([](const PlaybackKey& key, int percent) {
-        std::cout << "[download] hash=" << key.hex
-                  << " " << percent << "%" << std::endl;
-    });
+void ConsoleEventLogger::subscribeTo(PlaybackProcessor* processor) {
+    QObject::connect(processor, &PlaybackProcessor::streamReady,
+                     [](QString keyHex, QString url) {
+                         std::cout << "[stream-ready] hash=" << keyHex.toStdString()
+                                   << " url=" << url.toStdString() << std::endl;
+                     });
+    QObject::connect(processor, &PlaybackProcessor::streamError,
+                     [](QString keyHex, QString reason) {
+                         std::cerr << "[stream-error] hash=" << keyHex.toStdString()
+                                   << " reason=" << reason.toStdString() << std::endl;
+                     });
+    QObject::connect(processor, &PlaybackProcessor::streamProgress,
+                     [](QString keyHex, int percent) {
+                         std::cout << "[download] hash=" << keyHex.toStdString()
+                                   << " " << percent << "%" << std::endl;
+                     });
 }
 
 void ConsoleEventLogger::subscribeTo(LoginUseCase* loginUseCase) {

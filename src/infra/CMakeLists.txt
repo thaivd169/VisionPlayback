@@ -1,14 +1,14 @@
 #----------------------------------------------------------------------------------
 # vp_infra — secondary-adapter layer. Implements the domain port interfaces
 # using HCNetSDK (DVR auth + downloader), ffmpeg via QProcess (DASH packager),
-# the filesystem (stream cache), and a Qt-event-loop dispatcher.
+# the filesystem (stream cache), and Qt-based hashing.
 #
 # Also hosts technical foundations: HCNetSDKBootstrap (RAII init/cleanup) and
 # Config (default constants).
 #
 # Depends on vp_domain (PUBLIC — port headers + value types) and Qt::Core
-# (PRIVATE — QProcess, QFile, QMetaObject::invokeMethod). HCNetSDK is linked
-# via absolute path so consumers don't inherit -L flags.
+# (PRIVATE — QProcess, QFile). HCNetSDK is linked via absolute path so
+# consumers don't inherit -L flags.
 #----------------------------------------------------------------------------------
 qt_add_library(vp_infra STATIC
     HCNetSDKBootstrap.h    HCNetSDKBootstrap.cpp
@@ -18,7 +18,6 @@ qt_add_library(vp_infra STATIC
     dvr/HCNetSDKTimeMapper.h
     packaging/FfmpegDashPackager.h      packaging/FfmpegDashPackager.cpp
     persistence/FileSystemStreamCache.h persistence/FileSystemStreamCache.cpp
-    dispatcher/QtDispatcher.h           dispatcher/QtDispatcher.cpp
     hashing/QtHasher.h                  hashing/QtHasher.cpp
 )
 target_include_directories(vp_infra
@@ -26,14 +25,11 @@ target_include_directories(vp_infra
             ${CMAKE_CURRENT_SOURCE_DIR}/dvr
             ${CMAKE_CURRENT_SOURCE_DIR}/packaging
             ${CMAKE_CURRENT_SOURCE_DIR}/persistence
-            ${CMAKE_CURRENT_SOURCE_DIR}/dispatcher
             ${CMAKE_CURRENT_SOURCE_DIR}/hashing
     PRIVATE ${TD_3RDPARTY_PATH}/HCNetSDK/incEn
 )
 target_link_libraries(vp_infra
     PUBLIC  vp_domain
-            # Qt::Core is PUBLIC because QtDispatcher.h has Q_OBJECT and
-            # FileSystemStreamCache's constructor takes QString.
             Qt${QT_VERSION_MAJOR}::Core
     PRIVATE ${TD_3RDPARTY_PATH}/HCNetSDK/lib/libhcnetsdk.so
 )

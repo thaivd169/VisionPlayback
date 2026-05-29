@@ -4,32 +4,31 @@
 #include <string>
 
 #include "IHasher.h"
+#include "PlaybackRequest.h"
 
 class ApiKeyGuard;
-class LoginUseCase;
-class StreamPlaybackUseCase;
 
-// POST /playback — control-plane endpoint. Validates X-API-Key, looks up or
-// performs camera login, computes the PlaybackKey hash, dispatches the
-// download/package pipeline (no-op on cache hit), and returns the poll URL.
+// POST /playback — validates X-API-Key, parses the body, computes the
+// PlaybackKey and immediately returns 202 with the poll URL. The full request
+// (including credentials for login) is forwarded to PlaybackProcessor via the
+// playbackRequested signal so that login and download happen off the HTTP thread.
 class ControlApi : public QObject {
     Q_OBJECT
 public:
-    ControlApi(ApiKeyGuard*           guard,
-               LoginUseCase*          loginUseCase,
-               StreamPlaybackUseCase* streamUseCase,
-               std::string            hostBase,
-               const IHasher*         hasher,
-               QObject*               parent = nullptr);
+    ControlApi(ApiKeyGuard*   guard,
+               std::string    hostBase,
+               const IHasher* hasher,
+               QObject*       parent = nullptr);
 
     void registerRoutes(QHttpServer& server);
+
+signals:
+    void playbackRequested(PlaybackRequest request);
 
 private:
     QHttpServerResponse handlePost(const QHttpServerRequest& req);
 
-    ApiKeyGuard*           m_guard;
-    LoginUseCase*          m_loginUseCase;
-    StreamPlaybackUseCase* m_streamUseCase;
-    std::string            m_hostBase;
-    const IHasher*         m_hasher;
+    ApiKeyGuard*   m_guard;
+    std::string    m_hostBase;
+    const IHasher* m_hasher;
 };

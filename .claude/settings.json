@@ -24,7 +24,9 @@
       "Bash(cmake --build out/build/amd64-debug)",
       "Bash(cmake --build build/)",
       "Bash(cmake --build /home/thaivd/TDIC/VisionPlayback/out/build)",
-      "Bash(cmake --build out/build/amd64-debug --target VisionPlayback)"
+      "Bash(cmake --build out/build/amd64-debug --target VisionPlayback)",
+      "Bash(cmake --build build)",
+      "Bash(cmake --workflow --preset amd64-debug)"
     ],
     "additionalDirectories": [
       "/home/thaivd/TDIC/VisionPlayback"

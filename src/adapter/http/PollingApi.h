@@ -1,27 +1,33 @@
 #pragma once
+#include <QHash>
 #include <QHttpServer>
 #include <QObject>
+#include <QString>
 #include <string>
 
-class IStreamCacheRepository;
-class StreamPlaybackUseCase;
+#include "StreamStatus.h"
 
-// GET /playback?id=<hash> — public polling. Pure read of the use case's
-// active-job table + the cache repository; never triggers downloads.
+class IStreamCacheRepository;
+
+// GET /playback?id=<hash> — public polling. Maintains a local status cache
+// kept in sync via the statusChanged signal from PlaybackProcessor, so
+// handleGet never touches cross-thread state.
 class PollingApi : public QObject {
     Q_OBJECT
 public:
-    PollingApi(StreamPlaybackUseCase*  streamUseCase,
-               IStreamCacheRepository* cache,
+    PollingApi(IStreamCacheRepository* cache,
                std::string             hostBase,
                QObject*                parent = nullptr);
 
     void registerRoutes(QHttpServer& server);
 
+public slots:
+    void onStatusChanged(QString keyHex, StreamStatus status);
+
 private:
     QHttpServerResponse handleGet(const QHttpServerRequest& req);
 
-    StreamPlaybackUseCase*  m_streamUseCase;
-    IStreamCacheRepository* m_cache;
-    std::string             m_hostBase;
+    IStreamCacheRepository*      m_cache;
+    std::string                  m_hostBase;
+    QHash<QString, StreamStatus> m_statusCache;
 };
