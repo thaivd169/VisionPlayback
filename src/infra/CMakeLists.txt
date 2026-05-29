@@ -19,6 +19,7 @@ qt_add_library(vp_infra STATIC
     packaging/FfmpegDashPackager.h      packaging/FfmpegDashPackager.cpp
     persistence/FileSystemStreamCache.h persistence/FileSystemStreamCache.cpp
     dispatcher/QtDispatcher.h           dispatcher/QtDispatcher.cpp
+    hashing/QtHasher.h                  hashing/QtHasher.cpp
 )
 target_include_directories(vp_infra
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}
@@ -26,6 +27,7 @@ target_include_directories(vp_infra
             ${CMAKE_CURRENT_SOURCE_DIR}/packaging
             ${CMAKE_CURRENT_SOURCE_DIR}/persistence
             ${CMAKE_CURRENT_SOURCE_DIR}/dispatcher
+            ${CMAKE_CURRENT_SOURCE_DIR}/hashing
     PRIVATE ${TD_3RDPARTY_PATH}/HCNetSDK/incEn
 )
 target_link_libraries(vp_infra

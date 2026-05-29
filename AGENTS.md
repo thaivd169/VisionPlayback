@@ -66,7 +66,7 @@ main  ─►  vp_infra ───────────────────
 
 - `vp_domain` is pure C++ and owns the **port interfaces** (`IAuthenticator`,
   `IPlaybackDownloader`, `IDashPackager`, `IStreamCacheRepository`,
-  `IDispatcher`) and the SHA-256 helper used by `makePlaybackKey`.
+  `IDispatcher`, `IHasher`).
 - `vp_usecase` is pure C++ (no Qt) and depends only on `vp_domain`. Async work
   is exposed via `std::function` callbacks; cross-thread marshalling goes
   through an injected `IDispatcher`.
@@ -113,12 +113,12 @@ GET  /dash/<hash>/*        ──► DashFileServer ─► downloads/<hash>/*
 
 | File                                              | Role                                                                                                |
 | ------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `src/domain/PlaybackKey.h`                        | 16-hex-char SHA-256 truncation + inline `makePlaybackKey(Credentials, Channel, TimeRange)`.         |
+| `src/domain/PlaybackKey.h`                        | 16-hex-char hash truncation + inline `makePlaybackKey(Credentials, Channel, TimeRange, IHasher&)`. Algorithm is injected — callers never pick a concrete hash.  |
 | `src/domain/PlaybackTime.h`                       | Calendar struct (mirrors `NET_DVR_TIME` shape). Parses `"YYYYMMDDTHHMMSS"`.                         |
 | `src/domain/PlaybackRequest.h`                    | `SessionToken token; Channel channel; TimeRange range; PlaybackKey key;`                            |
 | `src/domain/Credentials.h`                        | Pure `std::string` fields.                                                                          |
 | `src/domain/CameraIdentity.h`                     | `(ip, port, user)` tuple — login-cache key in `LoginUseCase`.                                       |
-| `src/domain/Sha256.{h,cpp}`                       | Compact SHA-256 used by `makePlaybackKey`.                                                          |
+| `src/domain/IHasher.h`                            | Port interface for one-shot hex digest. Keeps `makePlaybackKey` algorithm-agnostic.                 |
 | `src/domain/I{Authenticator,PlaybackDownloader,DashPackager,StreamCacheRepository,Dispatcher}.h` | Qt-free port interfaces. Async ones expose `std::function` callbacks. |
 | `src/usecase/StreamPlaybackUseCase.h/.cpp`        | Cache-first pipeline (Qt-free). Emits `onStreamReady / onStreamError / onDownloadProgress` callbacks. |
 | `src/usecase/LoginUseCase.h/.cpp`                 | Cache-first SDK login (Qt-free). Sweep-on-access idle eviction.                                     |
@@ -126,13 +126,14 @@ GET  /dash/<hash>/*        ──► DashFileServer ─► downloads/<hash>/*
 | `src/infra/dvr/HCNetSDKAuthenticator.h/.cpp`      | `IAuthenticator` impl. Wraps `NET_DVR_Login_V40` / `NET_DVR_Logout_V30`.                            |
 | `src/infra/dvr/HCNetSDKTimeMapper.h`              | The only file that names both `NET_DVR_TIME` and `PlaybackTime`.                                    |
 | `src/infra/packaging/FfmpegDashPackager.h/.cpp`   | `IDashPackager` impl. `ffmpeg -f dash` via `QProcess`.                                              |
-| `src/infra/persistence/FileSystemStreamCache.h/.cpp` | `IStreamCacheRepository` impl. Owns `downloads/<hash>.mp4` + `downloads/<hash>/manifest.mpd`.    |
+| `src/infra/persistence/FileSystemStreamCache.h/.cpp` | `IStreamCacheRepository` impl. Owns `downloads/<hash>.mp4` + `downloads/<hash>/manifest.mpd`. Implements `evictToCapacity()`: scans completed DASH dirs, sorts oldest-first by `lastModified`, removes until total size ≤ `maxBytes`, skipping keys in the provided exclusion list. |
 | `src/infra/dispatcher/QtDispatcher.h/.cpp`        | `IDispatcher` impl. Bounces callbacks onto the main thread via `QMetaObject::invokeMethod`.         |
+| `src/infra/hashing/QtHasher.h/.cpp`              | `IHasher` impl. Wraps `QCryptographicHash`. Supports `blake2s-128` (default), `sha256`, `sha512`. Selected via `--hash-algorithm` at startup. |
 | `src/infra/HCNetSDKBootstrap.{h,cpp}`             | RAII for `NET_DVR_Init` + `NET_DVR_Cleanup`.                                                        |
-| `src/infra/Config.h`                              | `kDefaultApiKey`, `kDefaultPort`, `kDefaultLoginIdleSeconds`.                                       |
-| `src/adapter/http/ControlApi.{h,cpp}`             | `POST /playback` — API-key check, login, dispatch, return poll URL.                                  |
+| `src/infra/Config.h`                              | `kDefaultApiKey`, `kDefaultPort`, `kDefaultLoginIdleSeconds`, `kDefaultMaxDownloadsSizeBytes` (100 GB), `kDefaultHashAlgorithm` (`"blake2s-128"`). |
+| `src/adapter/http/ControlApi.{h,cpp}`             | `POST /playback` — API-key check, login, dispatch, return poll URL. Receives `IHasher&` via constructor; passes it to `makePlaybackKey`. |
 | `src/adapter/http/PollingApi.{h,cpp}`             | `GET /playback?id=<hash>` — read-only status lookup.                                                |
-| `src/adapter/http/DashFileServer.{h,cpp}`         | `GET /dash/<hash>/*` — static MPD + segment delivery.                                               |
+| `src/adapter/http/DashFileServer.{h,cpp}`         | `GET /dash/<hash>/*` — static MPD + segment delivery. Tracks last-access timestamp per hash; `activeKeys()` returns hashes served within the last 30 s (used by the capacity eviction guard). |
 | `src/adapter/http/ApiKeyGuard.{h,cpp}`            | Constant-time `X-API-Key` comparator.                                                               |
 | `src/adapter/http/JsonCodec.{h,cpp}`              | Confines all `QJson*` ↔ domain conversions to one file.                                             |
 | `src/adapter/console/ConsoleEventLogger.{h,cpp}`  | Passive subscriber that registers lambdas via the use cases' callback setters.                      |
@@ -197,7 +198,8 @@ POST /playback
 ```
 
 The hash input is `"<ip>:<port>/ch<channel>/<start>-<end>"` →
-SHA-256 → first 16 hex chars. `user`/`pass` are **excluded** from the hash:
+configurable hash algorithm (default: Blake2s-128) → first 16 hex chars.
+`user`/`pass` are **excluded** from the hash:
 the artifact identity is the recording, not the credentials, and including
 the password would expose it to GPU brute-force against weak passwords.
 
@@ -227,6 +229,8 @@ GET /dash/<hash>/<file>.m4s       Content-Type: video/iso.segment
 | `--port=<n>`                   | `8080`                        | HTTP listen port.                      |
 | `--downloads-dir=<path>`       | `<appDir>/downloads`          | Where MP4 + DASH segments are written. |
 | `--login-idle-timeout=<sec>`   | `600`                         | Camera session idle eviction.          |
+| `--max-downloads-gb=<n>`       | `100`                         | Capacity cap for the downloads directory. Oldest DASH packages are evicted after each successful packaging until usage falls below the limit. Active jobs and hashes served within the last 30 s are never removed. |
+| `--hash-algorithm=<name>`      | `blake2s-128`                 | Hash algorithm for `PlaybackKey` derivation. Supported: `blake2s-128`, `sha256`, `sha512`. Unknown values print an error and exit immediately. |
 
 **Security note** — the default API key is a hard-coded placeholder defined
 as `kDefaultApiKey` in [src/infra/Config.h](src/infra/Config.h). Replace

@@ -20,7 +20,11 @@
       "Bash(LD_LIBRARY_PATH=/home/thaivd/TDIC/3rdparty/HCNetSDK/lib timeout 2 ./main/VisionPlayback --port=18082 --api-key=test-key)",
       "Bash(echo \"after-exit=$?\")",
       "Bash(LD_LIBRARY_PATH=/home/thaivd/TDIC/3rdparty/HCNetSDK/lib timeout 2 ./main/VisionPlayback --port=18084 --api-key=test-key)",
-      "Bash(LD_LIBRARY_PATH=/home/thaivd/TDIC/3rdparty/HCNetSDK/lib timeout 2 ./main/VisionPlayback --port=18085 --api-key=test-key)"
+      "Bash(LD_LIBRARY_PATH=/home/thaivd/TDIC/3rdparty/HCNetSDK/lib timeout 2 ./main/VisionPlayback --port=18085 --api-key=test-key)",
+      "Bash(cmake --build out/build/amd64-debug)",
+      "Bash(cmake --build build/)",
+      "Bash(cmake --build /home/thaivd/TDIC/VisionPlayback/out/build)",
+      "Bash(cmake --build out/build/amd64-debug --target VisionPlayback)"
     ],
     "additionalDirectories": [
       "/home/thaivd/TDIC/VisionPlayback"

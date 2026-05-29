@@ -3,7 +3,9 @@
 #include <QObject>
 #include <QString>
 #include <QTcpServer>
+#include <cstdint>
 #include <memory>
+#include <string>
 
 // Adapter layer (primary adapters: HTTP, console).
 #include "ApiKeyGuard.h"
@@ -12,7 +14,8 @@
 #include "DashFileServer.h"
 #include "PollingApi.h"
 
-// Infra layer (secondary adapters: HCNetSDK, ffmpeg, FS, dispatcher).
+// Infra layer (secondary adapters: HCNetSDK, ffmpeg, FS, dispatcher, hashing).
+#include "IHasher.h"
 #include "FfmpegDashPackager.h"
 #include "FileSystemStreamCache.h"
 #include "HCNetSDKAuthenticator.h"
@@ -39,13 +42,17 @@ private:
     void parseArgs(int argc, char* argv[]);
 
     // ---- Parsed CLI options ----
-    QString  m_apiKey;
-    quint16  m_port = 8080;
-    QString  m_downloadsDir;
-    int      m_loginIdleSec = 600;
+    QString       m_apiKey;
+    quint16       m_port = 8080;
+    QString       m_downloadsDir;
+    int           m_loginIdleSec = 600;
+    std::uint64_t m_maxDownloadsBytes = 100ULL * 1024 * 1024 * 1024;
+    std::string   m_hashAlgorithm;
 
     // ---- Order-sensitive ownership (RAII bootstrap first) ----
     vp::infra::HCNetSDKBootstrap m_hcnetsdk;
+
+    std::unique_ptr<IHasher> m_hasher;
 
     // Infra adapters (concrete impls of domain ports).
     HCNetSDKAuthenticator     m_authenticator;

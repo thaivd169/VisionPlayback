@@ -16,4 +16,11 @@ inline constexpr std::uint16_t kDefaultPort = 8080;
 // Idle timeout for the LoginUseCase camera-session cache.
 inline constexpr int kDefaultLoginIdleSeconds = 600;
 
+// Maximum total size of the downloads directory before LRU eviction kicks in.
+inline constexpr std::uint64_t kDefaultMaxDownloadsSizeBytes =
+    100ULL * 1024 * 1024 * 1024; // 100 GB
+
+// Hash algorithm used to derive PlaybackKey. Supported values: blake2s-128, sha256, sha512.
+inline constexpr std::string_view kDefaultHashAlgorithm = "blake2s-128";
+
 } // namespace vp::infra

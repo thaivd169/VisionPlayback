@@ -1,12 +1,11 @@
 #----------------------------------------------------------------------------------
 # vp_domain — Qt-FREE, SDK-FREE pure C++ static library.
-# Holds value objects, port interfaces, and the SHA-256 helper used by the
-# PlaybackKey factory. Audit invariant:
+# Holds value objects and port interfaces. Audit invariant:
 #     grep -rE 'Q[A-Z]|NET_DVR_|HCNetSDK' src/domain/
 # must return empty.
 #----------------------------------------------------------------------------------
 add_library(vp_domain STATIC
-    Sha256.h    Sha256.cpp
+    IHasher.h
     IAuthenticator.h
     IPlaybackDownloader.h
     IDashPackager.h

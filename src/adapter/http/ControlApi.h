@@ -3,6 +3,8 @@
 #include <QObject>
 #include <string>
 
+#include "IHasher.h"
+
 class ApiKeyGuard;
 class LoginUseCase;
 class StreamPlaybackUseCase;
@@ -17,6 +19,7 @@ public:
                LoginUseCase*          loginUseCase,
                StreamPlaybackUseCase* streamUseCase,
                std::string            hostBase,
+               const IHasher*         hasher,
                QObject*               parent = nullptr);
 
     void registerRoutes(QHttpServer& server);
@@ -28,4 +31,5 @@ private:
     LoginUseCase*          m_loginUseCase;
     StreamPlaybackUseCase* m_streamUseCase;
     std::string            m_hostBase;
+    const IHasher*         m_hasher;
 };

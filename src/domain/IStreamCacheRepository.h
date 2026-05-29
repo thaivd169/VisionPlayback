@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "PlaybackKey.h"
 
@@ -24,4 +25,9 @@ public:
 
     // Delete the intermediate raw mp4 for `key`. No-op if already absent.
     virtual void deleteMp4(const PlaybackKey& key) = 0;
+
+    // Remove the oldest completed DASH packages until total disk usage falls
+    // below the configured capacity limit. Entries whose key appears in
+    // `skipKeys` are never removed (active jobs or active HTTP streams).
+    virtual void evictToCapacity(const std::vector<PlaybackKey>& skipKeys) = 0;
 };

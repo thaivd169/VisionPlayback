@@ -1,24 +1,17 @@
 #include "Session.h"
 
+#include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDir>
 #include <QHostAddress>
 #include <QHttpHeaders>
 #include <QString>
+#include <QStringList>
 #include <chrono>
 #include <iostream>
 
 #include "Config.h"
-
-namespace {
-bool parseUInt16(const QString& s, quint16& out) {
-    bool ok = false;
-    const uint v = s.toUInt(&ok);
-    if (!ok || v > 0xFFFFu) return false;
-    out = static_cast<quint16>(v);
-    return true;
-}
-}  // namespace
+#include "QtHasher.h"
 
 Session::Session(int argc, char* argv[], QObject* parent)
     : QObject(parent),
@@ -27,6 +20,7 @@ Session::Session(int argc, char* argv[], QObject* parent)
       m_port(vp::infra::kDefaultPort),
       m_downloadsDir(QCoreApplication::applicationDirPath() + "/downloads"),
       m_loginIdleSec(vp::infra::kDefaultLoginIdleSeconds),
+      m_hashAlgorithm(vp::infra::kDefaultHashAlgorithm),
       m_hcnetsdk("./sdkLog/") {
     parseArgs(argc, argv);
     QDir().mkpath(m_downloadsDir);
@@ -34,8 +28,9 @@ Session::Session(int argc, char* argv[], QObject* parent)
         std::string("http://localhost:") + std::to_string(m_port);
 
     // Infrastructure construction
+    m_hasher = QtHasher::fromName(m_hashAlgorithm);
     m_dispatcher = std::make_unique<QtDispatcher>(this);
-    m_cache = std::make_unique<FileSystemStreamCache>(m_downloadsDir);
+    m_cache = std::make_unique<FileSystemStreamCache>(m_downloadsDir, m_maxDownloadsBytes);
 
     // Usecase construction
     m_loginUseCase = std::make_unique<LoginUseCase>(&m_authenticator,
@@ -52,12 +47,15 @@ Session::Session(int argc, char* argv[], QObject* parent)
                                                 m_loginUseCase.get(),
                                                 m_streamUseCase.get(),
                                                 hostBase,
+                                                m_hasher.get(),
                                                 this);
     m_pollingApi = std::make_unique<PollingApi>(m_streamUseCase.get(),
                                                 m_cache.get(),
                                                 hostBase,
                                                 this);
     m_dashFileServer = std::make_unique<DashFileServer>(m_downloadsDir, this);
+    m_streamUseCase->setActiveStreamingCallback(
+        [this] { return m_dashFileServer->activeKeys(); });
     m_eventLogger = std::make_unique<ConsoleEventLogger>();
     m_eventLogger->subscribeTo(m_streamUseCase.get());
     m_eventLogger->subscribeTo(m_loginUseCase.get());
@@ -93,21 +91,41 @@ bool Session::start() {
 }
 
 void Session::parseArgs(int argc, char* argv[]) {
-    for (int i = 1; i < argc; ++i) {
-        const QString arg = QString::fromLocal8Bit(argv[i]);
-        if (arg.startsWith("--api-key=")) {
-            m_apiKey = arg.mid(std::char_traits<char>::length("--api-key="));
-        } else if (arg.startsWith("--port=")) {
-            quint16 p = 0;
-            if (parseUInt16(arg.mid(std::char_traits<char>::length("--port=")), p))
-                m_port = p;
-        } else if (arg.startsWith("--downloads-dir=")) {
-            m_downloadsDir = arg.mid(std::char_traits<char>::length("--downloads-dir="));
-        } else if (arg.startsWith("--login-idle-timeout=")) {
-            bool ok = false;
-            const int n = arg.mid(std::char_traits<char>::length("--login-idle-timeout="))
-                              .toInt(&ok);
-            if (ok && n > 0) m_loginIdleSec = n;
-        }
+    QCommandLineParser parser;
+    parser.setApplicationDescription("VisionPlayback daemon");
+    parser.addHelpOption();
+    parser.addVersionOption();
+
+    QCommandLineOption apiKeyOpt({"k", "api-key"}, "HTTP API key.", "key");
+    QCommandLineOption portOpt({"p", "port"}, "TCP listen port.", "port");
+    QCommandLineOption downloadsOpt({"d", "downloads-dir"}, "Downloads directory.", "path");
+    QCommandLineOption idleOpt({"t", "login-idle-timeout"}, "Login idle timeout (seconds).", "seconds");
+    QCommandLineOption maxGbOpt({"g", "max-downloads-gb"}, "Downloads cache cap (GB).", "gb");
+    QCommandLineOption hashOpt({"a", "hash-algorithm"}, "Hash algo (blake2s-128|sha256|sha512).", "name");
+    parser.addOptions({apiKeyOpt, portOpt, downloadsOpt, idleOpt, maxGbOpt, hashOpt});
+
+    QStringList args;
+    args.reserve(argc);
+    for (int i = 0; i < argc; ++i) args << QString::fromLocal8Bit(argv[i]);
+    parser.process(args);
+
+    if (parser.isSet(apiKeyOpt)) m_apiKey = parser.value(apiKeyOpt);
+    if (parser.isSet(downloadsOpt)) m_downloadsDir = parser.value(downloadsOpt);
+    if (parser.isSet(hashOpt)) m_hashAlgorithm = parser.value(hashOpt).toStdString();
+
+    if (parser.isSet(portOpt)) {
+        bool ok = false;
+        const uint v = parser.value(portOpt).toUInt(&ok);
+        if (ok && v <= 0xFFFFu) m_port = static_cast<quint16>(v);
+    }
+    if (parser.isSet(idleOpt)) {
+        bool ok = false;
+        const int n = parser.value(idleOpt).toInt(&ok);
+        if (ok && n > 0) m_loginIdleSec = n;
+    }
+    if (parser.isSet(maxGbOpt)) {
+        bool ok = false;
+        const qulonglong gb = parser.value(maxGbOpt).toULongLong(&ok);
+        if (ok && gb > 0) m_maxDownloadsBytes = gb * 1024ULL * 1024 * 1024;
     }
 }

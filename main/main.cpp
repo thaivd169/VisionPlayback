@@ -6,19 +6,10 @@
 #define VISION_PLAYBACK_VERSION_STRING "unknown"
 #endif
 
-#include <iostream>
-#include <string>
-
 int main(int argc, char* argv[]) {
-    if (argc > 1 &&
-        (std::string(argv[1]) == "--version" ||
-         std::string(argv[1]) == "-v")) {
-        std::cout << VISION_PLAYBACK_VERSION_STRING << std::endl;
-        return 0;
-    }
-
     QCoreApplication app(argc, argv);
     app.setApplicationName("VisionPlayback");
+    app.setApplicationVersion(QStringLiteral(VISION_PLAYBACK_VERSION_STRING));
 
     Session session(argc, argv);
     if (!session.start())

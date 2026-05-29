@@ -36,6 +36,12 @@ public:
     void onDownloadProgress(ProgressCb cb){ m_progressCbs.push_back(std::move(cb)); }
     void onStreamError(ErrorCb cb)        { m_errorCbs.push_back(std::move(cb)); }
 
+    // Inject a callback that returns keys currently being served over HTTP.
+    // Called during eviction to protect actively-streamed videos from deletion.
+    void setActiveStreamingCallback(std::function<std::vector<PlaybackKey>()> fn) {
+        m_activeStreamingFn = std::move(fn);
+    }
+
 private:
     enum class JobState { Pending, Downloading, Packaging };
 
@@ -61,6 +67,7 @@ private:
     IDispatcher*                           m_dispatcher;
     std::string                            m_hostBase;
     std::unordered_map<PlaybackKey, Job>   m_activeJobs;
+    std::function<std::vector<PlaybackKey>()> m_activeStreamingFn;
 
     std::vector<ReadyCb>    m_readyCbs;
     std::vector<ProgressCb> m_progressCbs;

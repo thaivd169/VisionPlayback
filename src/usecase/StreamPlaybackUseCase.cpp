@@ -131,6 +131,14 @@ void StreamPlaybackUseCase::onPackageFinished(const PlaybackKey& key,
         return;
     }
     m_cache->deleteMp4(key);
+
+    std::vector<PlaybackKey> skip;
+    skip.reserve(m_activeJobs.size());
+    for (const auto& [k, _] : m_activeJobs) skip.push_back(k);
+    if (m_activeStreamingFn)
+        for (auto& k : m_activeStreamingFn()) skip.push_back(k);
+    m_cache->evictToCapacity(skip);
+
     emitReady(key, m_cache->mpdUrl(key, m_hostBase));
 }
 

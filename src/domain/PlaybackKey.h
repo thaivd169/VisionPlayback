@@ -5,8 +5,8 @@
 
 #include "Channel.h"
 #include "Credentials.h"
+#include "IHasher.h"
 #include "PlaybackTime.h"
-#include "Sha256.h"
 #include "TimeRange.h"
 
 // 16-hex-char SHA-256 truncation used as the cache key, on-disk directory
@@ -47,7 +47,8 @@ inline std::string formatPlaybackTime(const PlaybackTime& t) {
 // recording, not the credentials.
 inline PlaybackKey makePlaybackKey(const Credentials& credentials,
                                    const Channel&     channel,
-                                   const TimeRange&   range) {
+                                   const TimeRange&   range,
+                                   const IHasher&     hasher) {
     char portBuf[8];
     std::snprintf(portBuf, sizeof(portBuf), "%u",
                   static_cast<unsigned>(credentials.port));
@@ -66,5 +67,5 @@ inline PlaybackKey makePlaybackKey(const Credentials& credentials,
     input.push_back('-');
     input.append(formatPlaybackTime(range.end));
 
-    return PlaybackKey{ sha256_hex(input).substr(0, 16) };
+    return PlaybackKey{ hasher.hexDigest(input).substr(0, 16) };
 }

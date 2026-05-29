@@ -16,12 +16,14 @@ ControlApi::ControlApi(ApiKeyGuard*           guard,
                        LoginUseCase*          loginUseCase,
                        StreamPlaybackUseCase* streamUseCase,
                        std::string            hostBase,
+                       const IHasher*         hasher,
                        QObject*               parent)
     : QObject(parent),
       m_guard(guard),
       m_loginUseCase(loginUseCase),
       m_streamUseCase(streamUseCase),
-      m_hostBase(std::move(hostBase)) {}
+      m_hostBase(std::move(hostBase)),
+      m_hasher(hasher) {}
 
 void ControlApi::registerRoutes(QHttpServer& server) {
     server.route("/playback", QHttpServerRequest::Method::Post, this,
@@ -49,7 +51,8 @@ QHttpServerResponse ControlApi::handlePost(const QHttpServerRequest& req) {
 
     const PlaybackKey key = makePlaybackKey(parsed->credentials,
                                             parsed->channel,
-                                            parsed->range);
+                                            parsed->range,
+                                            *m_hasher);
 
     const SessionToken token = m_loginUseCase->ensureLoggedIn(parsed->credentials);
     if (token < 0) {

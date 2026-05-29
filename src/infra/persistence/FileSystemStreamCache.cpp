@@ -1,11 +1,20 @@
 #include "FileSystemStreamCache.h"
 
-#include <QByteArray>
-#include <QFile>
-#include <QIODevice>
+#include <algorithm>
+#include <unordered_set>
 
-FileSystemStreamCache::FileSystemStreamCache(QString downloadsDir)
-    : m_downloadsDir(std::move(downloadsDir)) {}
+#include <QByteArray>
+#include <QDateTime>
+#include <QDir>
+#include <QDirIterator>
+#include <QFile>
+#include <QFileInfo>
+#include <QIODevice>
+#include <QRegularExpression>
+
+FileSystemStreamCache::FileSystemStreamCache(QString downloadsDir,
+                                             std::uint64_t maxBytes)
+    : m_downloadsDir(std::move(downloadsDir)), m_maxBytes(maxBytes) {}
 
 bool FileSystemStreamCache::dashExists(const PlaybackKey& key) const {
     QFile f(QString::fromStdString(dashDir(key)) + "/manifest.mpd");
@@ -41,4 +50,56 @@ std::string FileSystemStreamCache::mpdUrl(const PlaybackKey& key,
     out.append(key.hex);
     out.append("/manifest.mpd");
     return out;
+}
+
+void FileSystemStreamCache::evictToCapacity(const std::vector<PlaybackKey>& skipKeys) {
+    if (m_maxBytes == 0) return;
+
+    std::unordered_set<std::string> skip;
+    skip.reserve(skipKeys.size());
+    for (const auto& k : skipKeys) skip.insert(k.hex);
+
+    static const QRegularExpression kHexDir("^[0-9a-f]{16}$");
+
+    struct Entry {
+        QString   path;
+        std::string hex;
+        quint64   sizeBytes  = 0;
+        QDateTime lastModified;
+    };
+
+    std::vector<Entry> entries;
+    const QDir dir(m_downloadsDir);
+    for (const QFileInfo& info : dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        if (!kHexDir.match(info.fileName()).hasMatch()) continue;
+
+        Entry e;
+        e.path         = info.filePath();
+        e.hex          = info.fileName().toStdString();
+        e.lastModified = info.lastModified();
+
+        QDirIterator it(e.path, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            it.next();
+            if (it.fileInfo().isFile())
+                e.sizeBytes += static_cast<quint64>(it.fileInfo().size());
+        }
+        entries.push_back(std::move(e));
+    }
+
+    quint64 total = 0;
+    for (const auto& e : entries) total += e.sizeBytes;
+
+    if (total <= m_maxBytes) return;
+
+    std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
+        return a.lastModified < b.lastModified;
+    });
+
+    for (const auto& e : entries) {
+        if (total <= m_maxBytes) break;
+        if (skip.count(e.hex)) continue;
+        if (QDir(e.path).removeRecursively())
+            total -= e.sizeBytes;
+    }
 }
