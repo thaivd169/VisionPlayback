@@ -7,20 +7,22 @@
 #include <QObject>
 #include <QString>
 #include <QTcpServer>
+#include <memory>
 #include <string>
 
 #include "PlaybackRequest.h"
 #include "StreamStatus.h"
 
 class IHasher;
-class IStreamCacheRepository;
 
 // Plain configuration values for the HTTP listener (no injected collaborators).
+// The hasher is built internally from `hashAlgorithm` (a CLI-chosen name).
 struct HttpListenerConfig {
     int         port;
     QString     apiKey;
     std::string hostBase;
     QString     downloadsDir;
+    std::string hashAlgorithm;
 };
 
 // Single HTTP boundary for the daemon. Owns the QHttpServer/QTcpServer and all
@@ -31,10 +33,8 @@ struct HttpListenerConfig {
 class HttpListener : public QObject {
     Q_OBJECT
    public:
-    HttpListener(HttpListenerConfig config,
-                 const IHasher* hasher,
-                 IStreamCacheRepository* cache,
-                 QObject* parent = nullptr);
+    explicit HttpListener(HttpListenerConfig config,
+                          QObject* parent = nullptr);
     HttpListener(const HttpListener& other) = delete;
     HttpListener& operator=(const HttpListener& other) = delete;
 
@@ -47,7 +47,7 @@ class HttpListener : public QObject {
 
    public slots:
     void started();
-    void onStatusChanged(QString keyHex, StreamStatus status);
+    void onStatusChanged(QString keyHex, StreamStatus status, QString url);
 
    private:
     // POST /playback — validate key, parse body, emit playbackRequested, 202.
@@ -67,12 +67,14 @@ class HttpListener : public QObject {
     QString      m_downloadsDir;
     std::string  m_expectedKey;
 
-    const IHasher*          m_hasher;
-    IStreamCacheRepository* m_cache;
+    std::unique_ptr<IHasher> m_hasher;       // owned, infra impl
 
-    // Local status mirror kept in sync via onStatusChanged; only touched on the
-    // HTTP thread, so handlePlaybackGet never reads cross-thread state.
+    // Local mirrors kept in sync via onStatusChanged; only touched on the HTTP
+    // thread, so handlePlaybackGet never reads cross-thread state. The processor
+    // (which owns the cache) supplies the ready URL through the signal, so the
+    // listener never touches the cache itself.
     QHash<QString, StreamStatus> m_statusCache;
+    QHash<QString, QString>      m_mpdUrlCache;
 };
 
 #endif  // ADAPTER_HTTP_LISTENER_H

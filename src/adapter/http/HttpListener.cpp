@@ -15,9 +15,11 @@
 #include <utility>
 
 #include "IHasher.h"
-#include "IStreamCacheRepository.h"
 #include "PlaybackKey.h"
 #include "PlaybackTime.h"
+// Concrete hasher impl is named only in this translation unit; the adapter
+// header keeps just a forward declaration of IHasher.
+#include "QtHasher.h"
 
 // ---------------------------------------------------------------------------
 // JSON codec (absorbed from the former JsonCodec namespace). All QJson* ↔
@@ -28,8 +30,8 @@ namespace {
 
 struct PlaybackPostBody {
     Credentials credentials;
-    Channel     channel;
-    TimeRange   range;
+    Channel channel;
+    TimeRange range;
 };
 
 // Parses a POST /playback body. Returns std::nullopt on malformed JSON or
@@ -46,42 +48,48 @@ std::optional<PlaybackPostBody> parsePlaybackPostBody(const QByteArray& bodyByte
 
     auto requireString = [&](const char* k, QString& sink) {
         const QJsonValue v = o.value(QLatin1String(k));
-        if (!v.isString()) { if (missingField) *missingField = QString::fromLatin1(k); return false; }
+        if (!v.isString()) {
+            if (missingField) *missingField = QString::fromLatin1(k);
+            return false;
+        }
         sink = v.toString();
         return true;
     };
     auto requireInt = [&](const char* k, int& sink) {
         const QJsonValue v = o.value(QLatin1String(k));
-        if (!v.isDouble()) { if (missingField) *missingField = QString::fromLatin1(k); return false; }
+        if (!v.isDouble()) {
+            if (missingField) *missingField = QString::fromLatin1(k);
+            return false;
+        }
         sink = v.toInt();
         return true;
     };
 
     QString ip, user, pass, start, end;
-    int     port = 0, channel = 0;
-    if (!requireString("ip",         ip))      return std::nullopt;
-    if (!requireInt   ("port",       port))    return std::nullopt;
-    if (!requireString("user",       user))    return std::nullopt;
-    if (!requireString("pass",       pass))    return std::nullopt;
-    if (!requireInt   ("channel_id", channel)) return std::nullopt;
-    if (!requireString("start_time", start))   return std::nullopt;
-    if (!requireString("end_time",   end))     return std::nullopt;
+    int port = 0, channel = 0;
+    if (!requireString("ip", ip)) return std::nullopt;
+    if (!requireInt("port", port)) return std::nullopt;
+    if (!requireString("user", user)) return std::nullopt;
+    if (!requireString("pass", pass)) return std::nullopt;
+    if (!requireInt("channel_id", channel)) return std::nullopt;
+    if (!requireString("start_time", start)) return std::nullopt;
+    if (!requireString("end_time", end)) return std::nullopt;
 
     PlaybackPostBody out;
-    out.credentials.ip   = ip.toStdString();
+    out.credentials.ip = ip.toStdString();
     out.credentials.port = static_cast<std::uint16_t>(port);
     out.credentials.user = user.toStdString();
     out.credentials.pass = pass.toStdString();
-    out.channel.id       = channel;
-    out.range.begin      = parsePlaybackTimeCompact(start.toStdString());
-    out.range.end        = parsePlaybackTimeCompact(end.toStdString());
+    out.channel.id = channel;
+    out.range.begin = parsePlaybackTimeCompact(start.toStdString());
+    out.range.end = parsePlaybackTimeCompact(end.toStdString());
     return out;
 }
 
 QByteArray serializePollResponseReady(const std::string& url) {
     QJsonObject o;
     o["status"] = "ready";
-    o["url"]    = QString::fromStdString(url);
+    o["url"] = QString::fromStdString(url);
     return QJsonDocument(o).toJson(QJsonDocument::Compact);
 }
 
@@ -105,7 +113,7 @@ QByteArray serializePollUrl(const std::string& pollUrl) {
 
 QByteArray serializeError(const QString& message) {
     QJsonObject o;
-    o["status"]  = "error";
+    o["status"] = "error";
     o["message"] = message;
     return QJsonDocument(o).toJson(QJsonDocument::Compact);
 }
@@ -116,8 +124,6 @@ QByteArray serializeError(const QString& message) {
 // HttpListener
 // ---------------------------------------------------------------------------
 HttpListener::HttpListener(HttpListenerConfig config,
-                           const IHasher* hasher,
-                           IStreamCacheRepository* cache,
                            QObject* parent)
     : QObject(parent),
       m_httpServer(nullptr),
@@ -127,8 +133,7 @@ HttpListener::HttpListener(HttpListenerConfig config,
       m_hostBase(std::move(config.hostBase)),
       m_downloadsDir(std::move(config.downloadsDir)),
       m_expectedKey(m_apiKey.toStdString()),
-      m_hasher(hasher),
-      m_cache(cache) {}
+      m_hasher(QtHasher::fromName(config.hashAlgorithm)) {}
 
 HttpListener::~HttpListener() {
     if (m_tcpServer && m_tcpServer->isListening()) {
@@ -200,9 +205,9 @@ QHttpServerResponse HttpListener::handlePlaybackPost(const QHttpServerRequest& r
 
     PlaybackRequest pr;
     pr.credentials = parsed->credentials;
-    pr.channel     = parsed->channel;
-    pr.range       = parsed->range;
-    pr.key         = key;
+    pr.channel = parsed->channel;
+    pr.range = parsed->range;
+    pr.key = key;
     emit playbackRequested(pr);
 
     const std::string pollUrl = m_hostBase + "/playback?id=" + key.hex;
@@ -224,8 +229,7 @@ QHttpServerResponse HttpListener::handlePlaybackGet(const QHttpServerRequest& re
 
     switch (status) {
         case StreamStatus::Ready: {
-            const PlaybackKey key{ idParam.toStdString() };
-            const std::string url = m_cache->mpdUrl(key, m_hostBase);
+            const std::string url = m_mpdUrlCache.value(idParam).toStdString();
             return QHttpServerResponse("application/json",
                                        serializePollResponseReady(url),
                                        QHttpServerResponse::StatusCode::Ok);
@@ -259,16 +263,21 @@ QHttpServerResponse HttpListener::serveStaticFile(const QString& relativePath) {
     const QByteArray data = file.readAll();
 
     QString mimeType = "application/octet-stream";
-    if (fullPath.endsWith(".mpd"))      mimeType = "application/dash+xml";
-    else if (fullPath.endsWith(".m4s")) mimeType = "video/iso.segment";
-    else if (fullPath.endsWith(".mp4")) mimeType = "video/mp4";
+    if (fullPath.endsWith(".mpd"))
+        mimeType = "application/dash+xml";
+    else if (fullPath.endsWith(".m4s"))
+        mimeType = "video/iso.segment";
+    else if (fullPath.endsWith(".mp4"))
+        mimeType = "video/mp4";
 
     return QHttpServerResponse(mimeType.toLatin1(), data,
                                QHttpServerResponse::StatusCode::Ok);
 }
 
-void HttpListener::onStatusChanged(QString keyHex, StreamStatus status) {
+void HttpListener::onStatusChanged(QString keyHex, StreamStatus status, QString url) {
     m_statusCache.insert(keyHex, status);
+    if (status == StreamStatus::Ready)
+        m_mpdUrlCache.insert(keyHex, url);
 }
 
 bool HttpListener::validateApiKey(const QByteArray& providedKey) const {

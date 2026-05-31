@@ -11,7 +11,6 @@
 #include <iostream>
 
 #include "Config.h"
-#include "QtHasher.h"
 
 Session::Session(int argc, char* argv[], QObject* parent)
     : QObject(parent),
@@ -31,26 +30,19 @@ Session::Session(int argc, char* argv[], QObject* parent)
     const std::string hostBase =
         std::string("http://localhost:") + std::to_string(m_portCli);
 
-    // Infrastructure construction
-    m_hasher = QtHasher::fromName(m_hashAlgorithmCli);
-    m_cache = std::make_unique<FileSystemStreamCache>(m_downloadsDirCli, m_maxDownloadsBytesCli);
-
-    // Use case construction
-    m_loginUseCase = std::make_unique<LoginUseCase>(&m_authenticator,
-                                                    std::chrono::seconds(m_loginIdleSecCli));
-
-    // Processor (owns the pipeline FSM, runs on its own thread)
-    m_processor = new PlaybackProcessor(m_cache.get(),
-                                        m_loginUseCase.get(),
-                                        &m_downloaderFactory,
-                                        &m_packagerFactory,
-                                        hostBase);
+    // Processor (owns the pipeline FSM, the on-disk stream cache, and its
+    // login/download/package collaborators; runs on its own thread)
+    m_processor = new PlaybackProcessor(
+        PlaybackProcessorConfig{.loginIdle = std::chrono::seconds(m_loginIdleSecCli),
+                                .downloadsDir = m_downloadsDirCli,
+                                .maxDownloadsBytes = m_maxDownloadsBytesCli,
+                                .hostBase = hostBase});
     m_processorThread = new QThread(this);
     m_httpThread = new QThread(this);
     m_httpListener = new HttpListener(
         HttpListenerConfig{.port = m_portCli, .apiKey = m_apiKeyCli,
-                           .hostBase = hostBase, .downloadsDir = m_downloadsDirCli},
-        m_hasher.get(), m_cache.get());
+                           .hostBase = hostBase, .downloadsDir = m_downloadsDirCli,
+                           .hashAlgorithm = m_hashAlgorithmCli});
     m_httpListener->moveToThread(m_httpThread);
     connect(m_httpThread, &QThread::started, m_httpListener, &HttpListener::started);
     connect(m_httpThread, &QThread::finished, m_httpListener, &HttpListener::deleteLater);

@@ -2,11 +2,13 @@
 # vp_adapter — primary-adapter layer. HTTP API and the PlaybackProcessor that
 # bridges HTTP and the pipeline on a dedicated thread.
 #
-# Direct dep is vp_usecase only — domain types reach this code transitively
-# through vp_usecase's PUBLIC link. Qt::Network/HttpServer is PRIVATE since
-# only the route classes need them. Audit invariant:
-#     grep -rE 'NET_DVR_|HCNetSDK' src/adapter/
-# must return empty.
+# Depends on vp_usecase (PUBLIC — domain types reach this code transitively) and
+# vp_infra (PRIVATE). The infra link exists because PlaybackProcessor.cpp builds
+# its own collaborators (HCNetSDKAuthenticator, HCNetSDKDownloaderFactory,
+# FfmpegDashPackagerFactory); those concrete types are named only in that .cpp,
+# never in a public adapter header. The old invariant
+#     grep -rE 'NET_DVR_|HCNetSDK' src/adapter/   (must be empty)
+# is intentionally relaxed — it now matches PlaybackProcessor.cpp only.
 #----------------------------------------------------------------------------------
 qt_add_library(vp_adapter STATIC
     http/HttpListener.h             http/HttpListener.cpp
@@ -25,4 +27,6 @@ target_link_libraries(vp_adapter
             Qt${QT_VERSION_MAJOR}::Core
             Qt${QT_VERSION_MAJOR}::Network
             Qt${QT_VERSION_MAJOR}::HttpServer
+    # Infra concrete impls are instantiated inside PlaybackProcessor.cpp only.
+    PRIVATE vp_infra
 )

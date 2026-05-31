@@ -12,15 +12,8 @@
 #include "PlaybackProcessor.h"
 
 // Infra layer (secondary adapters: HCNetSDK, ffmpeg, FS, hashing).
-#include "FfmpegDashPackager.h"
-#include "FileSystemStreamCache.h"
-#include "HCNetSDKAuthenticator.h"
 #include "HCNetSDKBootstrap.h"
-#include "HCNetSDKDownloader.h"
 #include "HttpListener.h"
-#include "IHasher.h"
-// Use cases.
-#include "LoginUseCase.h"
 
 // Composition root. Builds infra impls, injects them into use cases, then
 // wires HTTP routes + console logging on top. The one place that sees both
@@ -45,15 +38,6 @@ class Session : public QObject {
     std::string m_hashAlgorithmCli;
 
     std::unique_ptr<vp::infra::HCNetSDKBootstrap> m_hcnetSdkBootstrap;
-
-    std::unique_ptr<IHasher> m_hasher;
-    HCNetSDKAuthenticator m_authenticator;
-    HCNetSDKDownloaderFactory m_downloaderFactory;
-    FfmpegDashPackagerFactory m_packagerFactory;
-
-    std::unique_ptr<FileSystemStreamCache> m_cache;
-
-    std::unique_ptr<LoginUseCase> m_loginUseCase;
 
     QThread* m_processorThread;
     QThread* m_httpThread;

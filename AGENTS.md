@@ -56,12 +56,13 @@ when running from a custom working directory.
 
 ## Architecture
 
-Onion-style Clean Architecture. Four static libraries with a strict dependency
-direction (see [main/Session.cpp](main/Session.cpp) for the composition root):
+Onion-style Clean Architecture. Four static libraries (see
+[main/Session.cpp](main/Session.cpp) for the composition root):
 
 ```
 main  ─►  vp_adapter  ─►  vp_usecase  ─►  vp_domain
 main  ─►  vp_infra ──────────────────────►  vp_domain
+          vp_adapter  ─►  vp_infra   (PRIVATE — see note below)
 ```
 
 - `vp_domain` is pure C++ and owns the value objects (`PlaybackKey`,
@@ -73,11 +74,24 @@ main  ─►  vp_infra ───────────────────
 - `vp_infra` implements the domain ports using HCNetSDK (DVR auth + downloader),
   ffmpeg (via `QProcess`), the filesystem, and Qt's `QCryptographicHash`.
 - `vp_adapter` is the **primary-adapter** layer: the `HttpListener` HTTP
-  boundary plus the `PlaybackProcessor` pipeline orchestrator. Its only declared
-  dep is `vp_usecase` — domain types reach it transitively. It does NOT link
-  `vp_infra`.
-- `main` is the composition root; the one place that sees both adapter and
-  infra and wires them together.
+  boundary plus the `PlaybackProcessor` pipeline orchestrator. The two adapters
+  are **self-contained**: each takes a plain CLI-derived config struct
+  (`HttpListenerConfig`, `PlaybackProcessorConfig`) and builds its own infra
+  collaborators internally — so `vp_adapter` links `vp_infra` (**PRIVATE**).
+  The concrete infra types are named **only inside the `.cpp` files**, never in
+  an adapter header, so headers stay infra-free and the coupling is contained to
+  one translation unit per adapter.
+- `main` is the composition root, now thin: it parses the CLI into the two
+  config structs, constructs the adapters, moves them onto their threads, and
+  wires the signal graph. It no longer builds infra/use-case objects by hand.
+
+> **Layering note:** the adapter→infra link is a deliberate relaxation of the
+> original "adapter must never see infra" rule. It was adopted so each adapter
+> owns its collaborators (`PlaybackProcessor` builds the authenticator,
+> `LoginUseCase`, downloader/packager factories, and the `FileSystemStreamCache`;
+> `HttpListener` builds its `IHasher`) instead of `Session` wiring a long
+> positional argument list. Keep the concrete-type references confined to the
+> adapter `.cpp` files.
 
 ### Layer responsibilities
 
@@ -86,13 +100,16 @@ main  ─►  vp_infra ───────────────────
 | `src/domain` | `vp_domain`  | std C++ only                              | `grep -rE 'Q[A-Z]\|NET_DVR_\|HCNetSDK' src/domain/`  |
 | `src/usecase`| `vp_usecase` | `vp_domain` (PUBLIC)                      | `grep -rE 'Q[A-Z]\|NET_DVR_\|HCNetSDK' src/usecase/` |
 | `src/infra`  | `vp_infra`   | `vp_domain` (PUBLIC) + `Qt::Core` (PUBLIC) + HCNetSDK (PRIVATE) | (no rule — infra *is* the technical layer) |
-| `src/adapter`| `vp_adapter` | `vp_usecase` (PUBLIC) + Qt::Core/Network/HttpServer (PUBLIC) | `grep -rE 'NET_DVR_\|HCNetSDK' src/adapter/` |
+| `src/adapter`| `vp_adapter` | `vp_usecase` (PUBLIC) + `vp_infra` (PRIVATE) + Qt::Core/Network/HttpServer (PUBLIC) | none — see note (infra refs allowed in adapter `.cpp` only) |
 | `main`       | `VisionPlayback` | `vp_adapter` + `vp_infra` + Qt        | composition only                                    |
 
-Hard prohibitions enforced by CMake:
-- `vp_adapter` must NOT link `vp_infra`.
+Hard prohibitions still enforced by CMake:
 - `vp_adapter` must NOT directly link `vp_domain` — it reaches domain only
-  through `vp_usecase`'s PUBLIC link.
+  through `vp_usecase`'s (and `vp_infra`'s) PUBLIC links.
+- `vp_domain` and `vp_usecase` must stay Qt- and SDK-free.
+
+The adapter→infra link is allowed (PRIVATE) but infra references must stay in
+the adapter `.cpp` files, never in adapter headers.
 
 (Comments mentioning `HCNetSDK` are allowed everywhere — the audit cares
 about real code.)
@@ -108,8 +125,8 @@ POST /playback (X-API-Key) ── playbackRequested ──►  onPlaybackRequest
 GET /dash/<hash>/<file> ── keyAccessStarted/Ended ─►   ├─ IDashPackager (ffmpeg / QProcess)
   └─► downloads/<hash>/*             (signal)           └─ IStreamCacheRepository (FS) + evictToCapacity
 GET /playback?id=<hash>
-  └─ reads status mirror ◄────── statusChanged ──────  emits on every state change
-                                    (signal)
+  └─ reads status + URL mirror ◄─ statusChanged ──────  emits on every state change
+                                  (keyHex,status,url)    (url set only when Ready)
 
 PlaybackProcessor logs [login-ok] [download] [stream-ready] [stream-error] [login-fail] → stdout/stderr
 ```
@@ -135,9 +152,9 @@ PlaybackProcessor logs [login-ok] [download] [stream-ready] [stream-error] [logi
 | `src/infra/hashing/QtHasher.h/.cpp`              | `IHasher` impl. Wraps `QCryptographicHash`. Supports `blake2s-128` (default), `sha256`, `sha512`. Selected via `--hash-algorithm` at startup. |
 | `src/infra/HCNetSDKBootstrap.{h,cpp}`             | RAII for `NET_DVR_Init` + `NET_DVR_Cleanup`.                                                        |
 | `src/infra/Config.h`                              | `kDefaultApiKey`, `kDefaultPort`, `kDefaultLoginIdleSeconds`, `kDefaultMaxDownloadsSizeBytes` (100 GB), `kDefaultHashAlgorithm` (`"blake2s-128"`). |
-| `src/adapter/http/HttpListener.{h,cpp}`           | The entire HTTP boundary, on its own `QThread`. Owns `QHttpServer`/`QTcpServer` (created in `started()`); serves `POST /playback` (constant-time API-key check + inline `QJson`↔domain codec → `playbackRequested` signal), `GET /playback?id=` (reads a local status mirror), `GET /dash/<hash>/<file>` (static MPD/segments, emits `keyAccessStarted/Ended`). Built from `HttpListenerConfig` + injected `IHasher*` / `IStreamCacheRepository*`. |
-| `src/adapter/processor/PlaybackProcessor.{h,cpp}` | Pipeline FSM on its own `QThread`: login → download → ffmpeg-DASH → cache eviction. Talks to `HttpListener` only via Qt signals/slots; marshals downloader/packager callbacks onto its thread with `QMetaObject::invokeMethod`. Prints `[login-ok]`/`[download]`/`[stream-ready]`/`[stream-error]`/`[login-fail]` to stdout/stderr. |
-| `main/Session.h/.cpp`                             | Composition root. Parses CLI, builds infra → use case → adapters, moves `HttpListener` + `PlaybackProcessor` onto their `QThread`s and wires the signal graph. |
+| `src/adapter/http/HttpListener.{h,cpp}`           | The entire HTTP boundary, on its own `QThread`. Owns `QHttpServer`/`QTcpServer` (created in `started()`); serves `POST /playback` (constant-time API-key check + inline `QJson`↔domain codec → `playbackRequested` signal), `GET /playback?id=` (reads a local status + URL mirror), `GET /dash/<hash>/<file>` (static MPD/segments, emits `keyAccessStarted/Ended`). Built from `HttpListenerConfig` (which carries the hash-algorithm name); **owns** its `IHasher` (built via `QtHasher::fromName`). Holds no cache — the ready manifest URL arrives via the `statusChanged` signal. |
+| `src/adapter/processor/PlaybackProcessor.{h,cpp}` | Pipeline FSM on its own `QThread`: login → download → ffmpeg-DASH → cache eviction. Built from `PlaybackProcessorConfig`; **owns** all its collaborators — builds the `IAuthenticator` (HCNetSDK), `LoginUseCase`, downloader/packager factories, and the `FileSystemStreamCache` internally (concrete types named only in the `.cpp`). Talks to `HttpListener` only via Qt signals/slots (emits `statusChanged(keyHex, status, url)`); marshals downloader/packager callbacks onto its thread with `QMetaObject::invokeMethod`. Prints `[login-ok]`/`[download]`/`[stream-ready]`/`[stream-error]`/`[login-fail]` to stdout/stderr. |
+| `main/Session.h/.cpp`                             | Composition root, thin. Parses CLI into `PlaybackProcessorConfig` + `HttpListenerConfig`, constructs the two adapters (which build their own infra collaborators), moves them onto their `QThread`s and wires the signal graph. Owns only the `HCNetSDKBootstrap` and the two threads/adapters. |
 | `main/main.cpp`                                   | 25-line entry point: `--version`, construct `QCoreApplication`, construct `Session`, `app.exec()`.   |
 
 ### DASH cache layout
@@ -166,11 +183,14 @@ Three long-lived threads, plus a short-lived worker per active download:
   `HttpListener::started()` (fired by `QThread::started`) so the sockets belong
   to this thread. All route handlers and the status mirror run here.
 - **Processor thread** (`m_processorThread`) — hosts `PlaybackProcessor` (the
-  pipeline FSM), the synchronous `LoginUseCase`, and the ffmpeg `QProcess`.
+  pipeline FSM), the synchronous `LoginUseCase`, the `FileSystemStreamCache`
+  (sole owner), and the ffmpeg `QProcess`.
 - HTTP ↔ processor communication is **exclusively Qt signals/slots**, queued
   across threads: `playbackRequested` / `keyAccessStarted` / `keyAccessEnded`
-  → processor; `statusChanged` → the listener's status mirror. There is no
-  `IDispatcher` abstraction anymore.
+  → processor; `statusChanged(keyHex, status, url)` → the listener's status +
+  URL mirror (the `url` is the ready manifest URL, copied across the thread
+  boundary so the listener never touches the cache). There is no `IDispatcher`
+  abstraction anymore.
 - `HCNetSDKDownloader` owns its own `std::thread`; `start()` spawns it,
   `cancel()` flips an `std::atomic<bool>` the worker polls, the destructor
   joins. `PlaybackProcessor` wraps the worker's progress/finished callbacks in
@@ -226,10 +246,11 @@ GET /playback?id=<hash>
   → 404 {"status":"unknown_id"}
 ```
 
-No API key. Pure read of `HttpListener`'s in-memory status mirror, kept in sync
-by the processor's `statusChanged` signal — it never touches cross-thread state
-and never triggers downloads. The hash itself is the capability: anyone holding
-it can poll status, but they cannot start a new job without the API key.
+No API key. Pure read of `HttpListener`'s in-memory status + URL mirror, kept in
+sync by the processor's `statusChanged` signal — which also carries the ready
+manifest URL, so the listener never touches the cache, never reads cross-thread
+state, and never triggers downloads. The hash itself is the capability: anyone
+holding it can poll status, but they cannot start a new job without the API key.
 
 ### Static DASH delivery (frontend, public)
 ```
@@ -327,21 +348,38 @@ per state transition (`[login-ok]`, `[download]`, `[stream-ready]`,
 
 ## Layer-boundary audit
 
-The dependency direction is enforced both by CMake (no upward link declarations
-exist) and by these mechanical greps:
+The dependency direction is enforced both by CMake and by these mechanical
+greps:
 
 ```bash
-# domain must be Qt- and SDK-free (comments aside)
+# domain must be Qt- and SDK-free (comments aside)  → must be empty
 grep -rE 'Q[A-Z]|NET_DVR_|HCNetSDK' src/domain/
 
-# usecase must be Qt- AND SDK-free (Qt was removed in the Onion refactor)
+# usecase must be Qt- AND SDK-free (Qt was removed in the Onion refactor) → empty
 grep -rE 'Q[A-Z]|NET_DVR_|HCNetSDK' src/usecase/
 
-# adapter must be SDK-free (concrete HCNetSDK code lives in src/infra/dvr/)
-grep -rE 'NET_DVR_|HCNetSDK' src/adapter/
-
-# adapter must not directly link vp_domain (reaches it transitively via usecase)
+# adapter must not directly link vp_domain (reaches it transitively) → empty
 grep -E 'target_link_libraries.*vp_domain' src/adapter/CMakeLists.txt
+
+# raw HCNetSDK *types* (NET_DVR_*) stay out of the adapter → must be empty
+grep -rE 'NET_DVR_' src/adapter/
 ```
 
-All four should produce only comment lines, never real code references.
+The first three (plus the raw-`NET_DVR_` check) should produce only comment
+lines, never real code references.
+
+One grep that is **no longer empty** by design:
+
+```bash
+# adapter now instantiates infra impls — matches PlaybackProcessor.cpp
+# (HCNetSDKAuthenticator / HCNetSDKDownloaderFactory) plus the CMakeLists comment
+grep -rlE 'NET_DVR_|HCNetSDK' src/adapter/
+```
+
+This is expected: the adapters own their collaborators (see the Architecture
+layering note). Only the HCNetSDK-named types trip this grep; the other infra
+impls the adapters build (`FileSystemStreamCache`, `QtHasher`,
+`FfmpegDashPackagerFactory`) don't contain those tokens but are equally
+adapter-owned now. The invariant that still holds is that all such concrete
+infra references live **only in adapter `.cpp` files** — never in an adapter
+header.
