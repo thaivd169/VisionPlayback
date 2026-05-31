@@ -122,7 +122,7 @@ HTTP thread (HttpListener)                      processor thread (PlaybackProces
 POST /playback (X-API-Key) ── playbackRequested ──►  onPlaybackRequested
   (api-key check, JSON codec)        (signal)          ├─ LoginUseCase ──► IAuthenticator (HCNetSDK)
                                                         ├─ IPlaybackDownloader (HCNetSDK, own std::thread)
-GET /dash/<hash>/<file> ── keyAccessStarted/Ended ─►   ├─ IDashPackager (ffmpeg / QProcess)
+GET /dash/<hash>/<file> ──── keyAccessed ──────────►   ├─ IDashPackager (ffmpeg / QProcess)
   └─► downloads/<hash>/*             (signal)           └─ IStreamCacheRepository (FS) + evictToCapacity
 GET /playback?id=<hash>
   └─ reads status + URL mirror ◄─ statusChanged ──────  emits on every state change
@@ -152,7 +152,7 @@ PlaybackProcessor logs [login-ok] [download] [stream-ready] [stream-error] [logi
 | `src/infra/hashing/QtHasher.h/.cpp`              | `IHasher` impl. Wraps `QCryptographicHash`. Supports `blake2s-128` (default), `sha256`, `sha512`. Selected via `--hash-algorithm` at startup. |
 | `src/infra/HCNetSDKBootstrap.{h,cpp}`             | RAII for `NET_DVR_Init` + `NET_DVR_Cleanup`.                                                        |
 | `src/infra/Config.h`                              | `kDefaultApiKey`, `kDefaultPort`, `kDefaultLoginIdleSeconds`, `kDefaultMaxDownloadsSizeBytes` (100 GB), `kDefaultHashAlgorithm` (`"blake2s-128"`). |
-| `src/adapter/http/HttpListener.{h,cpp}`           | The entire HTTP boundary, on its own `QThread`. Owns `QHttpServer`/`QTcpServer` (created in `started()`); serves `POST /playback` (constant-time API-key check + inline `QJson`↔domain codec → `playbackRequested` signal), `GET /playback?id=` (reads a local status + URL mirror), `GET /dash/<hash>/<file>` (static MPD/segments, emits `keyAccessStarted/Ended`). Built from `HttpListenerConfig` (which carries the hash-algorithm name); **owns** its `IHasher` (built via `QtHasher::fromName`). Holds no cache — the ready manifest URL arrives via the `statusChanged` signal. |
+| `src/adapter/http/HttpListener.{h,cpp}`           | The entire HTTP boundary, on its own `QThread`. Owns `QHttpServer`/`QTcpServer` (created in `started()`); serves `POST /playback` (constant-time API-key check + inline `QJson`↔domain codec → `playbackRequested` signal), `GET /playback?id=` (reads a local status + URL mirror), `GET /dash/<hash>/<file>` (static MPD/segments, emits a single `keyAccessed` touch per served file). Built from `HttpListenerConfig` (which carries the hash-algorithm name); **owns** its `IHasher` (built via `QtHasher::fromName`). Holds no cache — the ready manifest URL arrives via the `statusChanged` signal. |
 | `src/adapter/processor/PlaybackProcessor.{h,cpp}` | Pipeline FSM on its own `QThread`: login → download → ffmpeg-DASH → cache eviction. Built from `PlaybackProcessorConfig`; **owns** all its collaborators — builds the `IAuthenticator` (HCNetSDK), `LoginUseCase`, downloader/packager factories, and the `FileSystemStreamCache` internally (concrete types named only in the `.cpp`). Talks to `HttpListener` only via Qt signals/slots (emits `statusChanged(keyHex, status, url)`); marshals downloader/packager callbacks onto its thread with `QMetaObject::invokeMethod`. Prints `[login-ok]`/`[download]`/`[stream-ready]`/`[stream-error]`/`[login-fail]` to stdout/stderr. |
 | `main/Session.h/.cpp`                             | Composition root, thin. Parses CLI into `PlaybackProcessorConfig` + `HttpListenerConfig`, constructs the two adapters (which build their own infra collaborators), moves them onto their `QThread`s and wires the signal graph. Owns only the `HCNetSDKBootstrap` and the two threads/adapters. |
 | `main/main.cpp`                                   | 25-line entry point: `--version`, construct `QCoreApplication`, construct `Session`, `app.exec()`.   |
@@ -186,11 +186,15 @@ Three long-lived threads, plus a short-lived worker per active download:
   pipeline FSM), the synchronous `LoginUseCase`, the `FileSystemStreamCache`
   (sole owner), and the ffmpeg `QProcess`.
 - HTTP ↔ processor communication is **exclusively Qt signals/slots**, queued
-  across threads: `playbackRequested` / `keyAccessStarted` / `keyAccessEnded`
-  → processor; `statusChanged(keyHex, status, url)` → the listener's status +
-  URL mirror (the `url` is the ready manifest URL, copied across the thread
-  boundary so the listener never touches the cache). There is no `IDispatcher`
-  abstraction anymore.
+  across threads: `playbackRequested` / `keyAccessed` → processor;
+  `statusChanged(keyHex, status, url)` → the listener's status + URL mirror (the
+  `url` is the ready manifest URL, copied across the thread boundary so the
+  listener never touches the cache). There is no `IDispatcher` abstraction
+  anymore. `keyAccessed` is a single per-file touch (not a start/end pair): the
+  processor records the access time in a `keyHex → lastAccessMs` map and, at
+  each eviction pass, skips keys touched within `kAccessTtlMs` (60 s) while
+  pruning older entries. This needs no refcounting and gives a real protection
+  window that spans the gaps between segment fetches.
 - `HCNetSDKDownloader` owns its own `std::thread`; `start()` spawns it,
   `cancel()` flips an `std::atomic<bool>` the worker polls, the destructor
   joins. `PlaybackProcessor` wraps the worker's progress/finished callbacks in
@@ -266,7 +270,7 @@ GET /dash/<hash>/<file>.m4s       Content-Type: video/iso.segment
 | `--port=<n>`                   | `8080`                        | HTTP listen port.                      |
 | `--downloads-dir=<path>`       | `<appDir>/downloads`          | Where MP4 + DASH segments are written. |
 | `--login-idle-timeout=<sec>`   | `600`                         | Camera session idle eviction.          |
-| `--max-downloads-gb=<n>`       | `100`                         | Capacity cap for the downloads directory. Oldest DASH packages are evicted after each successful packaging until usage falls below the limit. Active jobs and hashes served within the last 30 s are never removed. |
+| `--max-downloads-gb=<n>`       | `100`                         | Capacity cap for the downloads directory. Oldest DASH packages are evicted after each successful packaging until usage falls below the limit. Active jobs and hashes served within the last 60 s are never removed. |
 | `--hash-algorithm=<name>`      | `blake2s-128`                 | Hash algorithm for `PlaybackKey` derivation. Supported: `blake2s-128`, `sha256`, `sha512`. Unknown values print an error and exit immediately. |
 
 **Security note** — the default API key is a hard-coded placeholder defined

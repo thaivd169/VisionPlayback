@@ -1,6 +1,6 @@
 #pragma once
+#include <QHash>
 #include <QObject>
-#include <QSet>
 #include <QString>
 #include <chrono>
 #include <cstdint>
@@ -40,8 +40,8 @@ public:
 
 public slots:
     void onPlaybackRequested(PlaybackRequest request);
-    void onKeyActivated(QString keyHex);
-    void onKeyDeactivated(QString keyHex);
+    // Records the last access time of a key (see HttpListener::keyAccessed).
+    void onKeyAccessed(QString keyHex);
 
 signals:
     // Emitted on every job state transition so the HTTP listener can maintain
@@ -73,5 +73,12 @@ private:
     std::unique_ptr<IDashPackagerFactory>       m_packagerFactory;   // owned, infra impl
     std::string                                 m_hostBase;          // for ready-URL only
     std::unordered_map<PlaybackKey, Job>        m_activeJobs;
-    QSet<QString>                               m_activeStreamKeys;
+
+    // keyHex -> last DASH access (ms since epoch). A key accessed within
+    // kAccessTtl of an eviction pass is considered in use and skipped. The
+    // window must comfortably exceed the DASH segment duration so a watched
+    // stream survives the gaps between segment fetches; stale entries are
+    // pruned lazily during eviction.
+    static constexpr qint64 kAccessTtlMs = 60'000;
+    QHash<QString, qint64>                      m_lastAccessMs;
 };

@@ -1,5 +1,6 @@
 #include "PlaybackProcessor.h"
 
+#include <QDateTime>
 #include <iostream>
 #include <utility>
 #include <vector>
@@ -64,12 +65,8 @@ void PlaybackProcessor::onPlaybackRequested(PlaybackRequest request) {
     startDownload(request);
 }
 
-void PlaybackProcessor::onKeyActivated(QString keyHex) {
-    m_activeStreamKeys.insert(keyHex);
-}
-
-void PlaybackProcessor::onKeyDeactivated(QString keyHex) {
-    m_activeStreamKeys.remove(keyHex);
+void PlaybackProcessor::onKeyAccessed(QString keyHex) {
+    m_lastAccessMs.insert(keyHex, QDateTime::currentMSecsSinceEpoch());
 }
 
 void PlaybackProcessor::startDownload(const PlaybackRequest& request) {
@@ -154,12 +151,21 @@ void PlaybackProcessor::onPackageFinished(PlaybackKey key, bool success, QString
     }
     m_cache->deleteMp4(key);
 
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     std::vector<PlaybackKey> skip;
-    skip.reserve(m_activeJobs.size() + static_cast<size_t>(m_activeStreamKeys.size()));
+    skip.reserve(m_activeJobs.size() + static_cast<size_t>(m_lastAccessMs.size()));
     for (const auto& [k, _] : m_activeJobs)
         skip.push_back(k);
-    for (const QString& k : m_activeStreamKeys)
-        skip.push_back(PlaybackKey{k.toStdString()});
+    // Skip recently-watched streams; drop entries past the TTL so the map does
+    // not grow without bound.
+    for (auto it = m_lastAccessMs.begin(); it != m_lastAccessMs.end();) {
+        if (nowMs - it.value() <= kAccessTtlMs) {
+            skip.push_back(PlaybackKey{it.key().toStdString()});
+            ++it;
+        } else {
+            it = m_lastAccessMs.erase(it);
+        }
+    }
     m_cache->evictToCapacity(skip);
 
     emit statusChanged(QString::fromStdString(key.hex), StreamStatus::Ready,

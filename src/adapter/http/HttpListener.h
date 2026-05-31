@@ -42,8 +42,12 @@ class HttpListener : public QObject {
 
    signals:
     void playbackRequested(PlaybackRequest request);
-    void keyAccessStarted(QString keyHex);
-    void keyAccessEnded(QString keyHex);
+    // Emitted once per served DASH file. The processor records the access time
+    // and treats a key as "in use" for a TTL window afterwards, so a stream the
+    // client is actively watching is not evicted in the gap between segment
+    // fetches. A single touch (rather than a start/end pair) needs no
+    // refcounting and survives overlapping requests for the same key.
+    void keyAccessed(QString keyHex);
 
    public slots:
     void started();

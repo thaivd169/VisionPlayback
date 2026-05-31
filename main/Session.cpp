@@ -54,10 +54,8 @@ Session::Session(int argc, char* argv[], QObject* parent)
     // Signal wiring: HTTP → Processor
     connect(m_httpListener, &HttpListener::playbackRequested,
             m_processor, &PlaybackProcessor::onPlaybackRequested);
-    connect(m_httpListener, &HttpListener::keyAccessStarted,
-            m_processor, &PlaybackProcessor::onKeyActivated);
-    connect(m_httpListener, &HttpListener::keyAccessEnded,
-            m_processor, &PlaybackProcessor::onKeyDeactivated);
+    connect(m_httpListener, &HttpListener::keyAccessed,
+            m_processor, &PlaybackProcessor::onKeyAccessed);
 
     // Signal wiring: Processor → HTTP
     connect(m_processor, &PlaybackProcessor::statusChanged,

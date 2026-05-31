@@ -170,9 +170,8 @@ void HttpListener::started() {
     m_httpServer->route("/dash/<arg>/<arg>", QHttpServerRequest::Method::Get, this,
                         [this](const QString& key, const QString& file,
                                const QHttpServerRequest&) {
-                            emit keyAccessStarted(key);
                             auto response = serveStaticFile(key + "/" + file);
-                            emit keyAccessEnded(key);
+                            emit keyAccessed(key);
                             return response;
                         });
 
