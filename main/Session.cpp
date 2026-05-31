@@ -46,38 +46,45 @@ Session::Session(int argc, char* argv[], QObject* parent)
                                         &m_packagerFactory,
                                         hostBase);
     m_processorThread = new QThread(this);
+    m_httpThread = new QThread(this);
+    m_httpListener = new HttpListener(
+        HttpListenerConfig{.port = m_portCli, .apiKey = m_apiKeyCli,
+                           .hostBase = hostBase, .downloadsDir = m_downloadsDirCli},
+        m_hasher.get(), m_cache.get());
+    m_httpListener->moveToThread(m_httpThread);
+    connect(m_httpThread, &QThread::started, m_httpListener, &HttpListener::started);
+    connect(m_httpThread, &QThread::finished, m_httpListener, &HttpListener::deleteLater);
+
     m_processor->moveToThread(m_processorThread);
     connect(m_processorThread, &QThread::finished,
             m_processor, &QObject::deleteLater);
 
     // Signal wiring: HTTP → Processor
-    connect(m_controlApi.get(), &ControlApi::playbackRequested,
+    connect(m_httpListener, &HttpListener::playbackRequested,
             m_processor, &PlaybackProcessor::onPlaybackRequested);
-    connect(m_dashFileServer.get(), &DashFileServer::keyAccessStarted,
+    connect(m_httpListener, &HttpListener::keyAccessStarted,
             m_processor, &PlaybackProcessor::onKeyActivated);
-    connect(m_dashFileServer.get(), &DashFileServer::keyAccessEnded,
+    connect(m_httpListener, &HttpListener::keyAccessEnded,
             m_processor, &PlaybackProcessor::onKeyDeactivated);
 
     // Signal wiring: Processor → HTTP
     connect(m_processor, &PlaybackProcessor::statusChanged,
-            m_pollingApi.get(), &PollingApi::onStatusChanged);
+            m_httpListener, &HttpListener::onStatusChanged);
 
-    // Console logging
-    m_eventLogger = std::make_unique<ConsoleEventLogger>();
-    m_eventLogger->subscribeTo(m_processor);
-    m_eventLogger->subscribeTo(m_loginUseCase.get());
-
-    m_processorThread->start();
+    start();
 }
 
 Session::~Session() {
     m_processorThread->quit();
     m_processorThread->wait();
+
+    m_httpThread->quit();
+    m_httpThread->wait();
 }
 
 bool Session::start() {
-    m_httpThread->start();
     m_processorThread->start();
+    m_httpThread->start();
     return true;
 }
 

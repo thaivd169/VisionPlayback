@@ -1,5 +1,6 @@
 #include "PlaybackProcessor.h"
 
+#include <iostream>
 #include <utility>
 #include <vector>
 
@@ -24,8 +25,8 @@ void PlaybackProcessor::onPlaybackRequested(PlaybackRequest request) {
 
     if (m_cache->dashExists(key)) {
         emit statusChanged(keyHex, StreamStatus::Ready);
-        emit streamReady(keyHex,
-                         QString::fromStdString(m_cache->mpdUrl(key, m_hostBase)));
+        std::cout << "[stream-ready] hash=" << key.hex
+                  << " url=" << m_cache->mpdUrl(key, m_hostBase) << std::endl;
         return;
     }
 
@@ -34,12 +35,16 @@ void PlaybackProcessor::onPlaybackRequested(PlaybackRequest request) {
 
     const SessionToken token = m_loginUseCase->ensureLoggedIn(request.credentials);
     if (token < 0) {
+        const int sdkErr = m_loginUseCase->lastErrorCode();
+        std::cerr << "[login-fail] ip=" << request.credentials.ip
+                  << " sdkError=" << sdkErr << std::endl;
         emit statusChanged(keyHex, StreamStatus::Failed);
-        emit streamError(keyHex,
-                         QStringLiteral("login failed (sdk error %1)")
-                             .arg(m_loginUseCase->lastErrorCode()));
+        std::cerr << "[stream-error] hash=" << key.hex
+                  << " reason=login failed (sdk error " << sdkErr << ")" << std::endl;
         return;
     }
+    std::cout << "[login-ok] ip=" << request.credentials.ip
+              << " userId=" << static_cast<int>(token) << std::endl;
     request.token = token;
 
     if (m_cache->mp4Exists(key)) {
@@ -80,8 +85,9 @@ void PlaybackProcessor::startDownload(const PlaybackRequest& request) {
     emit statusChanged(keyHex, StreamStatus::Downloading);
 
     raw->setOnProgress([this, key](int percent) {
-        QMetaObject::invokeMethod(this, [this, key, percent] {
-            emit streamProgress(QString::fromStdString(key.hex), percent);
+        QMetaObject::invokeMethod(this, [key, percent] {
+            std::cout << "[download] hash=" << key.hex
+                      << " " << percent << "%" << std::endl;
         }, Qt::QueuedConnection);
     });
     raw->setOnFinished([this, key](bool ok, std::string err) {
@@ -121,8 +127,8 @@ void PlaybackProcessor::onDownloadFinished(PlaybackKey key, bool success, QStrin
     if (!success) {
         m_activeJobs.erase(it);
         emit statusChanged(QString::fromStdString(key.hex), StreamStatus::Failed);
-        emit streamError(QString::fromStdString(key.hex),
-                         "download failed: " + err);
+        std::cerr << "[stream-error] hash=" << key.hex
+                  << " reason=download failed: " << err.toStdString() << std::endl;
         return;
     }
 
@@ -139,8 +145,8 @@ void PlaybackProcessor::onPackageFinished(PlaybackKey key, bool success, QString
 
     if (!success) {
         emit statusChanged(QString::fromStdString(key.hex), StreamStatus::Failed);
-        emit streamError(QString::fromStdString(key.hex),
-                         "DASH packaging failed: " + err);
+        std::cerr << "[stream-error] hash=" << key.hex
+                  << " reason=DASH packaging failed: " << err.toStdString() << std::endl;
         return;
     }
     m_cache->deleteMp4(key);
@@ -154,6 +160,6 @@ void PlaybackProcessor::onPackageFinished(PlaybackKey key, bool success, QString
     m_cache->evictToCapacity(skip);
 
     emit statusChanged(QString::fromStdString(key.hex), StreamStatus::Ready);
-    emit streamReady(QString::fromStdString(key.hex),
-                     QString::fromStdString(m_cache->mpdUrl(key, m_hostBase)));
+    std::cout << "[stream-ready] hash=" << key.hex
+              << " url=" << m_cache->mpdUrl(key, m_hostBase) << std::endl;
 }

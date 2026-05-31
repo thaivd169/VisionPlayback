@@ -35,11 +35,8 @@ public slots:
     void onKeyDeactivated(QString keyHex);
 
 signals:
-    void streamReady(QString keyHex, QString mpdUrl);
-    void streamError(QString keyHex, QString reason);
-    void streamProgress(QString keyHex, int percent);
-    // Emitted on every job state transition so PollingApi can maintain its own
-    // status cache without any cross-thread data access.
+    // Emitted on every job state transition so the HTTP listener can maintain
+    // its own status cache without any cross-thread data access.
     void statusChanged(QString keyHex, StreamStatus status);
 
 private:

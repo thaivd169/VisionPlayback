@@ -18,14 +18,10 @@ SessionToken LoginUseCase::ensureLoggedIn(const Credentials& credentials) {
 
     const SessionToken token = m_authenticator->login(credentials);
     if (token < 0) {
-        for (const auto& cb : m_failedCbs)
-            cb(credentials.ip, m_authenticator->lastErrorCode());
         return token;
     }
 
     m_cache.emplace(id, Entry{ token, now });
-    for (const auto& cb : m_succeededCbs)
-        cb(credentials.ip, static_cast<int>(token));
     return token;
 }
 

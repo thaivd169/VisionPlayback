@@ -4,7 +4,7 @@
 #include <memory>
 
 // Qt-backed IHasher implementation. Algorithm is chosen at startup via CLI and
-// injected into ControlApi by Session. Default: Blake2s_128.
+// injected into HttpListener by Session. Default: Blake2s_128.
 class QtHasher : public IHasher {
 public:
     explicit QtHasher(QCryptographicHash::Algorithm algo);

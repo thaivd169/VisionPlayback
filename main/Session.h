@@ -8,13 +8,8 @@
 #include <memory>
 #include <string>
 
-// Adapter layer (primary adapters: HTTP, console).
-#include "ApiKeyGuard.h"
-#include "ConsoleEventLogger.h"
-#include "ControlApi.h"
-#include "DashFileServer.h"
+// Adapter layer (primary adapters: HTTP).
 #include "PlaybackProcessor.h"
-#include "PollingApi.h"
 
 // Infra layer (secondary adapters: HCNetSDK, ffmpeg, FS, hashing).
 #include "FfmpegDashPackager.h"
@@ -64,6 +59,4 @@ class Session : public QObject {
     QThread* m_httpThread;
     PlaybackProcessor* m_processor;
     HttpListener* m_httpListener;
-
-    std::unique_ptr<ConsoleEventLogger> m_eventLogger;
 };
