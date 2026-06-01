@@ -10,7 +10,6 @@ add_library(vp_domain STATIC
     IPlaybackDownloader.h
     IDashPackager.h
     IStreamCacheRepository.h
-    IDispatcher.h
 )
 target_include_directories(vp_domain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(vp_domain PUBLIC cxx_std_20)

@@ -11,82 +11,70 @@
 #include <iostream>
 
 #include "Config.h"
-#include "QtHasher.h"
 
 Session::Session(int argc, char* argv[], QObject* parent)
     : QObject(parent),
-      m_apiKey(QString::fromUtf8(vp::infra::kDefaultApiKey.data(),
-                                 static_cast<int>(vp::infra::kDefaultApiKey.size()))),
-      m_port(vp::infra::kDefaultPort),
-      m_downloadsDir(QCoreApplication::applicationDirPath() + "/downloads"),
-      m_loginIdleSec(vp::infra::kDefaultLoginIdleSeconds),
-      m_hashAlgorithm(vp::infra::kDefaultHashAlgorithm),
-      m_hcnetsdk("./sdkLog/") {
+      m_apiKeyCli(QString::fromUtf8(vp::infra::kDefaultApiKey.data(),
+                                    static_cast<int>(vp::infra::kDefaultApiKey.size()))),
+      m_portCli(vp::infra::kDefaultPort),
+      m_downloadsDirCli(QCoreApplication::applicationDirPath() + "/downloads"),
+      m_loginIdleSecCli(vp::infra::kDefaultLoginIdleSeconds),
+      m_hashAlgorithmCli(vp::infra::kDefaultHashAlgorithm),
+      m_hcnetSdkBootstrap(std::make_unique<vp::infra::HCNetSDKBootstrap>("./sdkLog/")),
+      m_processorThread(nullptr),
+      m_httpThread(nullptr),
+      m_processor(nullptr),
+      m_httpListener(nullptr) {
     parseArgs(argc, argv);
-    QDir().mkpath(m_downloadsDir);
+    createDownloadDir();
     const std::string hostBase =
-        std::string("http://localhost:") + std::to_string(m_port);
+        std::string("http://localhost:") + std::to_string(m_portCli);
 
-    // Infrastructure construction
-    m_hasher = QtHasher::fromName(m_hashAlgorithm);
-    m_dispatcher = std::make_unique<QtDispatcher>(this);
-    m_cache = std::make_unique<FileSystemStreamCache>(m_downloadsDir, m_maxDownloadsBytes);
+    // Processor (owns the pipeline FSM, the on-disk stream cache, and its
+    // login/download/package collaborators; runs on its own thread)
+    m_processor = new PlaybackProcessor(
+        PlaybackProcessorConfig{.loginIdle = std::chrono::seconds(m_loginIdleSecCli),
+                                .downloadsDir = m_downloadsDirCli,
+                                .maxDownloadsBytes = m_maxDownloadsBytesCli,
+                                .hostBase = hostBase});
+    m_processorThread = new QThread(this);
+    m_httpThread = new QThread(this);
+    m_httpListener = new HttpListener(
+        HttpListenerConfig{.port = m_portCli, .apiKey = m_apiKeyCli,
+                           .hostBase = hostBase, .downloadsDir = m_downloadsDirCli,
+                           .hashAlgorithm = m_hashAlgorithmCli});
+    m_httpListener->moveToThread(m_httpThread);
+    connect(m_httpThread, &QThread::started, m_httpListener, &HttpListener::started);
+    connect(m_httpThread, &QThread::finished, m_httpListener, &HttpListener::deleteLater);
 
-    // Usecase construction
-    m_loginUseCase = std::make_unique<LoginUseCase>(&m_authenticator,
-                                                    std::chrono::seconds(m_loginIdleSec));
-    m_streamUseCase = std::make_unique<StreamPlaybackUseCase>(m_cache.get(),
-                                                              &m_downloaderFactory,
-                                                              &m_packagerFactory,
-                                                              m_dispatcher.get(),
-                                                              hostBase);
+    m_processor->moveToThread(m_processorThread);
+    connect(m_processorThread, &QThread::finished,
+            m_processor, &QObject::deleteLater);
 
-    // Adapter construction
-    m_apiKeyGuard = std::make_unique<ApiKeyGuard>(m_apiKey.toStdString());
-    m_controlApi = std::make_unique<ControlApi>(m_apiKeyGuard.get(),
-                                                m_loginUseCase.get(),
-                                                m_streamUseCase.get(),
-                                                hostBase,
-                                                m_hasher.get(),
-                                                this);
-    m_pollingApi = std::make_unique<PollingApi>(m_streamUseCase.get(),
-                                                m_cache.get(),
-                                                hostBase,
-                                                this);
-    m_dashFileServer = std::make_unique<DashFileServer>(m_downloadsDir, this);
-    m_streamUseCase->setActiveStreamingCallback(
-        [this] { return m_dashFileServer->activeKeys(); });
-    m_eventLogger = std::make_unique<ConsoleEventLogger>();
-    m_eventLogger->subscribeTo(m_streamUseCase.get());
-    m_eventLogger->subscribeTo(m_loginUseCase.get());
+    // Signal wiring: HTTP → Processor
+    connect(m_httpListener, &HttpListener::playbackRequested,
+            m_processor, &PlaybackProcessor::onPlaybackRequested);
+    connect(m_httpListener, &HttpListener::keyAccessed,
+            m_processor, &PlaybackProcessor::onKeyAccessed);
+
+    // Signal wiring: Processor → HTTP
+    connect(m_processor, &PlaybackProcessor::statusChanged,
+            m_httpListener, &HttpListener::onStatusChanged);
+
+    start();
 }
 
-Session::~Session() = default;
+Session::~Session() {
+    m_processorThread->quit();
+    m_processorThread->wait();
+
+    m_httpThread->quit();
+    m_httpThread->wait();
+}
 
 bool Session::start() {
-    m_tcpServer = new QTcpServer(this);
-    if (!m_tcpServer->listen(QHostAddress::Any, m_port)) {
-        std::cerr << "[fatal] Could not bind on port " << m_port << std::endl;
-        return false;
-    }
-    m_httpServer.bind(m_tcpServer);
-
-    // Shared CORS middleware.
-    m_httpServer.addAfterRequestHandler(this,
-                                        [](const QHttpServerRequest&, QHttpServerResponse& resp) {
-                                            auto headers = resp.headers();
-                                            headers.append(QHttpHeaders::WellKnownHeader::AccessControlAllowOrigin, "*");
-                                            headers.append(QHttpHeaders::WellKnownHeader::AccessControlAllowMethods, "GET, POST, OPTIONS");
-                                            headers.append(QHttpHeaders::WellKnownHeader::AccessControlAllowHeaders, "Content-Type, X-API-Key");
-                                            resp.setHeaders(headers);
-                                        });
-
-    m_controlApi->registerRoutes(m_httpServer);
-    m_pollingApi->registerRoutes(m_httpServer);
-    m_dashFileServer->registerRoutes(m_httpServer);
-
-    std::cout << "VisionPlayback daemon listening on port " << m_port
-              << " (api-key=" << m_apiKey.toStdString() << ")" << std::endl;
+    m_processorThread->start();
+    m_httpThread->start();
     return true;
 }
 
@@ -109,23 +97,27 @@ void Session::parseArgs(int argc, char* argv[]) {
     for (int i = 0; i < argc; ++i) args << QString::fromLocal8Bit(argv[i]);
     parser.process(args);
 
-    if (parser.isSet(apiKeyOpt)) m_apiKey = parser.value(apiKeyOpt);
-    if (parser.isSet(downloadsOpt)) m_downloadsDir = parser.value(downloadsOpt);
-    if (parser.isSet(hashOpt)) m_hashAlgorithm = parser.value(hashOpt).toStdString();
+    if (parser.isSet(apiKeyOpt)) m_apiKeyCli = parser.value(apiKeyOpt);
+    if (parser.isSet(downloadsOpt)) m_downloadsDirCli = parser.value(downloadsOpt);
+    if (parser.isSet(hashOpt)) m_hashAlgorithmCli = parser.value(hashOpt).toStdString();
 
     if (parser.isSet(portOpt)) {
         bool ok = false;
         const uint v = parser.value(portOpt).toUInt(&ok);
-        if (ok && v <= 0xFFFFu) m_port = static_cast<quint16>(v);
+        if (ok && v <= 0xFFFFu) m_portCli = static_cast<quint16>(v);
     }
     if (parser.isSet(idleOpt)) {
         bool ok = false;
         const int n = parser.value(idleOpt).toInt(&ok);
-        if (ok && n > 0) m_loginIdleSec = n;
+        if (ok && n > 0) m_loginIdleSecCli = n;
     }
     if (parser.isSet(maxGbOpt)) {
         bool ok = false;
         const qulonglong gb = parser.value(maxGbOpt).toULongLong(&ok);
-        if (ok && gb > 0) m_maxDownloadsBytes = gb * 1024ULL * 1024 * 1024;
+        if (ok && gb > 0) m_maxDownloadsBytesCli = gb * 1024ULL * 1024 * 1024;
     }
+}
+
+void Session::createDownloadDir() {
+    QDir().mkpath(m_downloadsDirCli);
 }

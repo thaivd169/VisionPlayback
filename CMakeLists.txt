@@ -40,7 +40,6 @@ add_compile_definitions(VISION_PLAYBACK_VERSION_STRING="${VISION_PLAYBACK_VERSIO
 set(TD_3RDPARTY_PATH "${CMAKE_SOURCE_DIR}/../3rdparty")
 
 # Setup Qt framework
-# GUI modules (Widgets, Multimedia, MultimediaWidgets, Concurrent) dropped.
 list(APPEND CMAKE_PREFIX_PATH "$ENV{HOME}/Qt/6.11.0/gcc_64/lib/cmake/Qt6")
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS
@@ -48,8 +47,6 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS
 message("[${CMAKE_PROJECT_NAME}] [Qt] version   :   ${QT_VERSION_MAJOR}.${QT_VERSION_MINOR}.${QT_VERSION_PATCH}")
 qt_standard_project_setup()
 
-# HCNetSDK include + link paths are now PRIVATE to vp_adapter
-# (see src/adapter/CMakeLists.txt). They no longer pollute every target.
 
 add_subdirectory(src/domain)
 add_subdirectory(src/infra)

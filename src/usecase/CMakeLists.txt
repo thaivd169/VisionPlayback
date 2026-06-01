@@ -5,8 +5,7 @@
 # must return empty.
 #----------------------------------------------------------------------------------
 add_library(vp_usecase STATIC
-    StreamPlaybackUseCase.h   StreamPlaybackUseCase.cpp
-    LoginUseCase.h            LoginUseCase.cpp
+    LoginUseCase.h   LoginUseCase.cpp
 )
 target_include_directories(vp_usecase PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(vp_usecase PUBLIC vp_domain)
