@@ -15,6 +15,9 @@ target_link_libraries(VisionPlayback PRIVATE
     Qt${QT_VERSION_MAJOR}::HttpServer
 )
 set_target_properties(VisionPlayback PROPERTIES
+    # In-tree runs resolve HCNetSDK from the sibling 3rdparty checkout.
     BUILD_RPATH   "${TD_3RDPARTY_PATH}/HCNetSDK/lib"
-    INSTALL_RPATH "${TD_3RDPARTY_PATH}/HCNetSDK/lib"
+    # The install tree is relocatable: both Qt and HCNetSDK libs are bundled
+    # under <prefix>/lib, found relative to the binary in <prefix>/bin.
+    INSTALL_RPATH "$ORIGIN/../lib"
 )

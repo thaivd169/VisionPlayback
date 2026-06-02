@@ -26,10 +26,25 @@
       "Bash(cmake --build /home/thaivd/TDIC/VisionPlayback/out/build)",
       "Bash(cmake --build out/build/amd64-debug --target VisionPlayback)",
       "Bash(cmake --build build)",
-      "Bash(cmake --workflow --preset amd64-debug)"
+      "Bash(cmake --workflow --preset amd64-debug)",
+      "Bash(cmake --build --preset amd64-release-install)",
+      "Bash(readelf -d bin/VisionPlayback)",
+      "Bash(ldd bin/VisionPlayback)",
+      "Bash(rm -rf /tmp/vp-test)",
+      "Bash(cp -r /home/thaivd/TDIC/VisionPlayback/out/install/amd64-release /tmp/vp-test)",
+      "Bash(env -u LD_LIBRARY_PATH /tmp/vp-test/bin/VisionPlayback --version)",
+      "Bash(rm -rf /tmp/vp-test && echo \"cleaned up /tmp/vp-test\")",
+      "Bash(docker version *)",
+      "Bash(docker buildx *)",
+      "Bash(hadolint /home/thaivd/TDIC/VisionPlayback/Dockerfile)",
+      "Bash(sg docker *)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(docker run --rm ubuntu:24.04 bash -c ' *)",
+      "Bash(grep -n \"non-root\\\\|vp user\\\\|\\\\`vp\\\\`\\\\|USER \" AGENTS.md)"
     ],
     "additionalDirectories": [
-      "/home/thaivd/TDIC/VisionPlayback"
+      "/home/thaivd/TDIC/VisionPlayback",
+      "/tmp/vp-test"
     ]
   }
 }

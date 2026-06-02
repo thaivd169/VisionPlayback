@@ -48,12 +48,12 @@ curl -s -X POST http://localhost:8080/playback \
 
 **Responses:**
 
-| Code | Body                                                              | When                            |
-| ---- | ----------------------------------------------------------------- | ------------------------------- |
-| 200  | `{"poll_url":"http://localhost:8080/playback?id=<hash>"}`         | Job queued (or already cached)  |
-| 400  | `{"status":"error","message":"bad payload: <field>"}`             | Missing/wrong JSON field        |
-| 401  | `{"status":"error","message":"invalid api key"}`                  | Header missing or doesn't match |
-| 502  | `{"status":"error","message":"login failed: <hcnetsdk-error>"}`   | Synchronous SDK login failed    |
+| Code | Body                                                            | When                            |
+| ---- | --------------------------------------------------------------- | ------------------------------- |
+| 200  | `{"poll_url":"http://localhost:8080/playback?id=<hash>"}`       | Job queued (or already cached)  |
+| 400  | `{"status":"error","message":"bad payload: <field>"}`           | Missing/wrong JSON field        |
+| 401  | `{"status":"error","message":"invalid api key"}`                | Header missing or doesn't match |
+| 502  | `{"status":"error","message":"login failed: <hcnetsdk-error>"}` | Synchronous SDK login failed    |
 
 Time format is `YYYYMMDDTHHMMSS` (UTC). The `<hash>` is
 `sha256_hex("ip:port/ch<n>/<start>-<end>")[..16]` — `user`/`pass` are
@@ -73,12 +73,12 @@ curl -s -w '\nHTTP %{http_code}\n' "http://localhost:8080/playback?id=$HASH"
 
 **Responses:**
 
-| Code | Body                                                                          |
-| ---- | ----------------------------------------------------------------------------- |
-| 200  | `{"status":"ready","url":"http://localhost:8080/dash/<hash>/manifest.mpd"}`   |
-| 202  | `{"status":"pending"}`  (Downloading or Packaging)                            |
-| 404  | `{"status":"unknown_id"}`  (server has no record — caller never POSTed)       |
-| 400  | `{"status":"error","message":"missing id query param"}`                       |
+| Code | Body                                                                        |
+| ---- | --------------------------------------------------------------------------- |
+| 200  | `{"status":"ready","url":"http://localhost:8080/dash/<hash>/manifest.mpd"}` |
+| 202  | `{"status":"pending"}`  (Downloading or Packaging)                          |
+| 404  | `{"status":"unknown_id"}`  (server has no record — caller never POSTed)     |
+| 400  | `{"status":"error","message":"missing id query param"}`                     |
 
 Typical polling loop:
 
@@ -108,11 +108,11 @@ curl -i "http://localhost:8080/dash/$HASH/manifest.mpd"
 vlc "http://localhost:8080/dash/$HASH/manifest.mpd"
 ```
 
-| Path                                   | Content-Type             |
-| -------------------------------------- | ------------------------ |
-| `/dash/<hash>/manifest.mpd`            | `application/dash+xml`   |
-| `/dash/<hash>/init-stream0.m4s`        | `video/iso.segment`      |
-| `/dash/<hash>/chunk-stream0-NNNNN.m4s` | `video/iso.segment`      |
+| Path                                   | Content-Type           |
+| -------------------------------------- | ---------------------- |
+| `/dash/<hash>/manifest.mpd`            | `application/dash+xml` |
+| `/dash/<hash>/init-stream0.m4s`        | `video/iso.segment`    |
+| `/dash/<hash>/chunk-stream0-NNNNN.m4s` | `video/iso.segment`    |
 
 `..` in the path → 403. Missing file → 404.
 

@@ -54,4 +54,33 @@ add_subdirectory(src/usecase)
 add_subdirectory(src/adapter)
 add_subdirectory(main)
 
+#----------------------------------------------------------------------------------
+# Install / deploy — produce a self-contained, relocatable tree under
+# CMAKE_INSTALL_PREFIX (<prefix>/{bin,lib,plugins}). The binary's INSTALL_RPATH
+# is $ORIGIN/../lib (set in main/CMakeLists.txt), so it finds both the Qt
+# runtime and HCNetSDK without LD_LIBRARY_PATH. ffmpeg stays an external
+# dependency (invoked via QProcess on PATH) — not bundled.
+#----------------------------------------------------------------------------------
 install(TARGETS VisionPlayback RUNTIME DESTINATION bin)
+
+# Qt runtime: libraries → lib, plugins → plugins, plus a generated bin/qt.conf.
+# POST_EXCLUDE_REGEXES keeps Qt's runtime-dependency scan from copying a partial
+# HCNetSDK set (it would only see the linked libhcnetsdk.so, not the dlopened
+# core/plugin libs) — we install the full SDK ourselves below.
+qt_generate_deploy_app_script(
+    TARGET VisionPlayback
+    OUTPUT_SCRIPT deploy_script
+    NO_UNSUPPORTED_PLATFORM_ERROR
+    POST_EXCLUDE_REGEXES "3rdparty/HCNetSDK"
+)
+install(SCRIPT ${deploy_script})
+
+# HCNetSDK runtime: copy the whole shipped lib dir (~26 MB). The SDK dlopens
+# most components lazily by name, so the dependency graph is undocumented —
+# copying everything is the safe, zero-maintenance default. install(DIRECTORY)
+# recurses, so the HCNetSDKCom/ plugin subdir is preserved next to the core libs.
+install(DIRECTORY "${TD_3RDPARTY_PATH}/HCNetSDK/lib/"
+        DESTINATION lib
+        FILES_MATCHING
+        PATTERN "*.so*"
+        PATTERN "HCNetSDK_Log_Switch.xml")

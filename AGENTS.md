@@ -37,6 +37,73 @@ classes inside static libraries are picked up because each layer uses
 
 ---
 
+## Install / Deploy
+
+Produces a **self-contained, relocatable** tree under `CMAKE_INSTALL_PREFIX`
+(`out/install/amd64-release` by preset) that bundles the executable, the Qt 6
+runtime (via Qt's own `qt_generate_deploy_app_script`), and the full HCNetSDK
+runtime — copy the folder to another x86-64 Linux host and run it directly, no
+`LD_LIBRARY_PATH` needed.
+
+```bash
+cmake --build --preset amd64-release           # build first
+cmake --install out/build/amd64-release        # → out/install/amd64-release
+# or, in one shot, the install build preset:
+cmake --build --preset amd64-release-install
+```
+
+Layout:
+
+```
+<prefix>/bin/VisionPlayback        # INSTALL_RPATH = $ORIGIN/../lib
+<prefix>/bin/qt.conf               # generated; points Qt at ../plugins
+<prefix>/lib/libQt6*.so.6          # Qt runtime (deploy script)
+<prefix>/lib/libhcnetsdk.so + libHC*/libcrypto.so.1.1/...   # HCNetSDK
+<prefix>/lib/HCNetSDKCom/*.so      # HCNetSDK dlopen plugins (kept beside core libs)
+<prefix>/plugins/...               # Qt plugins
+```
+
+The whole HCNetSDK `lib/` dir (~26 MB) is copied wholesale: the SDK `dlopen`s
+most components lazily by name, so the dependency graph is undocumented and
+pruning risks cryptic runtime errors. **Runtime prerequisite:** `ffmpeg` must be
+on `PATH` (`apt install ffmpeg`) — it is invoked as a child process and is
+intentionally **not** bundled.
+
+### Docker
+
+A multi-stage [Dockerfile](Dockerfile) (both stages `ubuntu:24.04`) builds the
+app in a Qt-6.11 + toolchain stage and copies only the relocatable install tree
++ `ffmpeg` into the runtime image. HCNetSDK enters as a **BuildKit named build
+context** (it lives outside the repo at `../3rdparty/HCNetSDK`):
+
+```bash
+# from the repo root
+docker build --build-context hcnetsdk=../3rdparty/HCNetSDK -t visionplayback:latest .
+
+# run — ALWAYS override the insecure default API key; downloads persist in a volume
+docker run --rm -p 8080:8080 \
+  -v vp-downloads:/var/lib/visionplayback/downloads \
+  visionplayback:latest --api-key=my-secret-key
+```
+
+[scripts/run-docker.sh](scripts/run-docker.sh) is a convenience wrapper that
+bind-mounts a host folder (`$HOME/Videos/playbacks`) instead of a named volume.
+
+`--port`/`--downloads-dir` are baked into the `ENTRYPOINT`; any flags after the
+image name are appended (`QCommandLineParser` takes the last value, so they also
+override the defaults). `WORKDIR` (`/var/lib/visionplayback`) holds the SDK's
+`./sdkLog/`.
+
+The container runs as **root** (the image default — no `USER` is set). Root can
+write into a bind-mounted host directory regardless of its ownership, so the
+downloads volume works with no uid matching; the tradeoff is that downloaded
+files are owned by `root` on the host (use `sudo` to delete/move them). To run
+non-root instead — files owned by your host user, smaller blast radius — add a
+service user whose uid/gid match the host (`useradd -u $(id -u) …` + `USER`) and
+ensure the bind-mount target is owned by that uid.
+
+---
+
 ## Run
 
 ```bash
