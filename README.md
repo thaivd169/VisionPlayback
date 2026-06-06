@@ -2,8 +2,9 @@
 
 Headless HTTP daemon that downloads surveillance video from Hikvision cameras
 via HCNetSDK, packages it as MPEG-DASH with ffmpeg, and serves a control +
-polling JSON API alongside static DASH segments. No GUI — clients consume the
-served MPD URLs in any DASH player (VLC, browser, etc.).
+polling JSON API alongside static DASH segments. It can also hand back a whole
+recording — or a time-clipped sub-range — as a single downloadable MP4. No GUI —
+clients consume the served MPD URLs in any DASH player (VLC, browser, etc.).
 
 For architecture, build instructions, layer responsibilities, and coding
 conventions, see [AGENTS.md](AGENTS.md).
@@ -118,6 +119,42 @@ vlc "http://localhost:8080/dash/$HASH/manifest.mpd"
 
 ---
 
+### 4. GET `/download/<hash>` — download a full playback or a clip (public)
+
+Returns the playback as a single saveable MP4, built on demand from the DASH
+package. The playback must already be **ready** (request it first via POST
+`/playback`). Time bounds are **offsets in seconds from the start of the
+recording**; omit both to get the whole thing.
+
+```bash
+HASH=730ae17a983691b9
+
+# Whole playback (-OJ saves it under the server-suggested filename)
+curl -OJ "http://localhost:8080/download/$HASH"
+
+# A clip — minute 2 to minute 5 (start=120, end=300)
+curl -OJ "http://localhost:8080/download/$HASH?start=120&end=300"
+
+# From 30s in to the end
+curl -OJ "http://localhost:8080/download/$HASH?start=30"
+```
+
+**Responses:**
+
+| Code | Body / result                                                                 | When                                           |
+| ---- | ----------------------------------------------------------------------------- | ---------------------------------------------- |
+| 200  | MP4 bytes; `Content-Disposition: attachment; filename="playback-<hash>[-<start>s-<end>s].mp4"` | Export succeeded              |
+| 400  | `{"status":"error",...}`                                                       | Bad `<hash>` (not 16 hex) or bad range (`end<=start`, non-numeric) |
+| 404  | `{"status":"error","message":"not ready"}`                                     | Playback absent or not yet ready               |
+| 500  | `{"status":"error",...}`                                                       | ffmpeg failed                                  |
+
+`Content-Type` is `video/mp4`. The remux is a stream copy (no re-encode), so
+cuts land on the nearest keyframe — a clip may be off by up to one keyframe
+interval. The server prepares the file asynchronously and returns it in a single
+request, then deletes it right after sending; nothing accumulates on disk.
+
+---
+
 ### End-to-end example
 
 ```bash
@@ -141,8 +178,14 @@ done
 # 3. Get manifest and play
 MPD=$(echo "$RESP" | jq -r .url)
 vlc "$MPD"
+
+# 4. …or download the whole recording (or a clip) as one MP4
+HASH=${POLL##*id=}
+curl -OJ "http://localhost:8080/download/$HASH"                 # full
+curl -OJ "http://localhost:8080/download/$HASH?start=120&end=300"  # minute 2–5
 ```
 
-CORS is permissive (`Access-Control-Allow-Origin: *`) so browsers can poll and
-play directly. Watch the daemon's stdout for live `[login-ok]`, `[download]`,
-`[stream-ready]` events from `ConsoleEventLogger`.
+CORS is permissive (`Access-Control-Allow-Origin: *`) so browsers can poll,
+play, and download directly. Watch the daemon's stdout for live `[login-ok]`,
+`[download]`, `[stream-ready]`, and `[export]`/`[export-ready]` events from
+`PlaybackProcessor`.

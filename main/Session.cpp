@@ -56,10 +56,14 @@ Session::Session(int argc, char* argv[], QObject* parent)
             m_processor, &PlaybackProcessor::onPlaybackRequested);
     connect(m_httpListener, &HttpListener::keyAccessed,
             m_processor, &PlaybackProcessor::onKeyAccessed);
+    connect(m_httpListener, &HttpListener::exportRequested,
+            m_processor, &PlaybackProcessor::onExportRequested);
 
     // Signal wiring: Processor → HTTP
     connect(m_processor, &PlaybackProcessor::statusChanged,
             m_httpListener, &HttpListener::onStatusChanged);
+    connect(m_processor, &PlaybackProcessor::exportFinished,
+            m_httpListener, &HttpListener::onExportFinished);
 
     start();
 }

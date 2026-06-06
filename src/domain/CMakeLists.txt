@@ -9,6 +9,7 @@ add_library(vp_domain STATIC
     IAuthenticator.h
     IPlaybackDownloader.h
     IDashPackager.h
+    IClipExporter.h
     IStreamCacheRepository.h
 )
 target_include_directories(vp_domain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

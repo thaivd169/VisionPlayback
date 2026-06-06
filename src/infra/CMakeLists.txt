@@ -17,6 +17,7 @@ qt_add_library(vp_infra STATIC
     dvr/HCNetSDKDownloader.h            dvr/HCNetSDKDownloader.cpp
     dvr/HCNetSDKTimeMapper.h
     packaging/FfmpegDashPackager.h      packaging/FfmpegDashPackager.cpp
+    packaging/FfmpegClipExporter.h      packaging/FfmpegClipExporter.cpp
     persistence/FileSystemStreamCache.h persistence/FileSystemStreamCache.cpp
     hashing/QtHasher.h                  hashing/QtHasher.cpp
 )

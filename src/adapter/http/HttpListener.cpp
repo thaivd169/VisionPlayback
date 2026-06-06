@@ -4,11 +4,13 @@
 #include <QHostAddress>
 #include <QHttpHeaders>
 #include <QHttpServerRequest>
+#include <QHttpServerResponder>
 #include <QHttpServerResponse>
 #include <QIODevice>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QRegularExpression>
 #include <QUrlQuery>
 #include <iostream>
 #include <optional>
@@ -118,6 +120,20 @@ QByteArray serializeError(const QString& message) {
     return QJsonDocument(o).toJson(QJsonDocument::Compact);
 }
 
+// Direct responder writes bypass the QHttpServer afterRequest CORS middleware,
+// so /download responses set the headers themselves.
+QHttpHeaders corsHeaders(QAnyStringView contentType) {
+    QHttpHeaders h;
+    h.append(QHttpHeaders::WellKnownHeader::ContentType, contentType);
+    h.append(QHttpHeaders::WellKnownHeader::AccessControlAllowOrigin, "*");
+    return h;
+}
+
+void writeJsonError(QHttpServerResponder& responder, const QString& message,
+                    QHttpServerResponder::StatusCode status) {
+    responder.write(serializeError(message), corsHeaders("application/json"), status);
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -173,6 +189,11 @@ void HttpListener::started() {
                             auto response = serveStaticFile(key + "/" + file);
                             emit keyAccessed(key);
                             return response;
+                        });
+    m_httpServer->route("/download/<arg>", QHttpServerRequest::Method::Get, this,
+                        [this](const QString& hash, const QHttpServerRequest& req,
+                               QHttpServerResponder&& responder) {
+                            handleDownloadGet(hash, req, std::move(responder));
                         });
 
     std::cout << "HTTP listener started" << std::endl;
@@ -271,6 +292,97 @@ QHttpServerResponse HttpListener::serveStaticFile(const QString& relativePath) {
 
     return QHttpServerResponse(mimeType.toLatin1(), data,
                                QHttpServerResponse::StatusCode::Ok);
+}
+
+void HttpListener::handleDownloadGet(const QString& hash,
+                                     const QHttpServerRequest& req,
+                                     QHttpServerResponder&& responder) {
+    static const QRegularExpression kHexId("^[0-9a-f]{16}$");
+    if (!kHexId.match(hash).hasMatch()) {
+        writeJsonError(responder, "bad hash",
+                       QHttpServerResponder::StatusCode::BadRequest);
+        return;
+    }
+
+    // Offsets in seconds from the start of the recording; both optional.
+    const QUrlQuery query(req.url().query());
+    int  startSec = -1;
+    int  endSec   = -1;
+    bool haveStart = false;
+    bool haveEnd   = false;
+    if (query.hasQueryItem("start")) {
+        bool ok = false;
+        startSec  = query.queryItemValue("start").toInt(&ok);
+        haveStart = true;
+        if (!ok || startSec < 0) {
+            writeJsonError(responder, "bad start",
+                           QHttpServerResponder::StatusCode::BadRequest);
+            return;
+        }
+    }
+    if (query.hasQueryItem("end")) {
+        bool ok = false;
+        endSec  = query.queryItemValue("end").toInt(&ok);
+        haveEnd = true;
+        if (!ok || endSec <= 0) {
+            writeJsonError(responder, "bad end",
+                           QHttpServerResponder::StatusCode::BadRequest);
+            return;
+        }
+    }
+    if (haveStart && haveEnd && endSec <= startSec) {
+        writeJsonError(responder, "end must be greater than start",
+                       QHttpServerResponder::StatusCode::BadRequest);
+        return;
+    }
+
+    QString filename = "playback-" + hash;
+    if (haveStart || haveEnd) {
+        filename += "-" + QString::number(haveStart ? startSec : 0) + "s";
+        if (haveEnd)
+            filename += "-" + QString::number(endSec) + "s";
+    }
+    filename += ".mp4";
+
+    const std::uint64_t id = ++m_nextExportId;
+    m_pendingExports.emplace(id, PendingExport{std::move(responder), filename});
+    emit exportRequested(id, hash, haveStart ? startSec : -1, haveEnd ? endSec : -1);
+}
+
+void HttpListener::onExportFinished(quint64 requestId, QString outputPath,
+                                    bool ok, QString error) {
+    auto it = m_pendingExports.find(requestId);
+    if (it == m_pendingExports.end()) return;
+
+    QHttpServerResponder& responder = it->second.responder;
+
+    if (!ok) {
+        const auto status = (error == "not ready")
+            ? QHttpServerResponder::StatusCode::NotFound
+            : QHttpServerResponder::StatusCode::InternalServerError;
+        writeJsonError(responder, error, status);
+        m_pendingExports.erase(it);
+        return;
+    }
+
+    QFile file(outputPath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        writeJsonError(responder, "export missing",
+                       QHttpServerResponder::StatusCode::InternalServerError);
+        m_pendingExports.erase(it);
+        QFile::remove(outputPath);
+        return;
+    }
+    const QByteArray data = file.readAll();
+    file.close();
+
+    QHttpHeaders headers = corsHeaders("video/mp4");
+    headers.append(QHttpHeaders::WellKnownHeader::ContentDisposition,
+                   "attachment; filename=\"" + it->second.filename + "\"");
+    responder.write(data, headers, QHttpServerResponder::StatusCode::Ok);
+
+    m_pendingExports.erase(it);
+    QFile::remove(outputPath);  // transient: gone once the download is served
 }
 
 void HttpListener::onStatusChanged(QString keyHex, StreamStatus status, QString url) {
