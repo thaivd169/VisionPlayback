@@ -175,6 +175,23 @@ void HttpListener::started() {
                                              resp.setHeaders(headers);
                                          });
 
+    // CORS preflight: browsers send OPTIONS before a cross-origin POST that
+    // carries a non-simple Content-Type or the custom X-API-Key header. Without
+    // an OPTIONS route QHttpServer answers 404 with no CORS headers (the
+    // afterRequest middleware only runs on matched routes), so the browser
+    // blocks the real request. Reply 204; the middleware appends the headers.
+    auto preflight = [](const QHttpServerRequest&) {
+        return QHttpServerResponse(QHttpServerResponse::StatusCode::NoContent);
+    };
+    m_httpServer->route("/playback", QHttpServerRequest::Method::Options, this, preflight);
+    m_httpServer->route("/dash/<arg>/<arg>", QHttpServerRequest::Method::Options, this,
+                        [preflight](const QString&, const QString&,
+                                    const QHttpServerRequest& req) { return preflight(req); });
+    m_httpServer->route("/download/<arg>", QHttpServerRequest::Method::Options, this,
+                        [preflight](const QString&, const QHttpServerRequest& req) {
+                            return preflight(req);
+                        });
+
     m_httpServer->route("/playback", QHttpServerRequest::Method::Post, this,
                         [this](const QHttpServerRequest& req) {
                             return handlePlaybackPost(req);
@@ -306,13 +323,13 @@ void HttpListener::handleDownloadGet(const QString& hash,
 
     // Offsets in seconds from the start of the recording; both optional.
     const QUrlQuery query(req.url().query());
-    int  startSec = -1;
-    int  endSec   = -1;
+    int startSec = -1;
+    int endSec = -1;
     bool haveStart = false;
-    bool haveEnd   = false;
+    bool haveEnd = false;
     if (query.hasQueryItem("start")) {
         bool ok = false;
-        startSec  = query.queryItemValue("start").toInt(&ok);
+        startSec = query.queryItemValue("start").toInt(&ok);
         haveStart = true;
         if (!ok || startSec < 0) {
             writeJsonError(responder, "bad start",
@@ -322,7 +339,7 @@ void HttpListener::handleDownloadGet(const QString& hash,
     }
     if (query.hasQueryItem("end")) {
         bool ok = false;
-        endSec  = query.queryItemValue("end").toInt(&ok);
+        endSec = query.queryItemValue("end").toInt(&ok);
         haveEnd = true;
         if (!ok || endSec <= 0) {
             writeJsonError(responder, "bad end",
@@ -358,8 +375,8 @@ void HttpListener::onExportFinished(quint64 requestId, QString outputPath,
 
     if (!ok) {
         const auto status = (error == "not ready")
-            ? QHttpServerResponder::StatusCode::NotFound
-            : QHttpServerResponder::StatusCode::InternalServerError;
+                                ? QHttpServerResponder::StatusCode::NotFound
+                                : QHttpServerResponder::StatusCode::InternalServerError;
         writeJsonError(responder, error, status);
         m_pendingExports.erase(it);
         return;

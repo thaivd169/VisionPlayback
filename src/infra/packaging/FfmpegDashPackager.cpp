@@ -45,18 +45,64 @@ void FfmpegDashPackager::package(const std::string& mp4Path,
                                   "Ensure ffmpeg is installed and on PATH.");
                      });
 
-    const QStringList args = {
-        "-y",
-        "-i", QString::fromStdString(mp4Path),
-        "-c", "copy",
-        "-f", "dash",
-        "-seg_duration", "4",
-        "-init_seg_name",  "init-stream$RepresentationID$.m4s",
-        "-media_seg_name", "chunk-stream$RepresentationID$-$Number%05d$.m4s",
-        QString::fromStdString(m_mpdPath)
-    };
+    // Browsers can't reliably play HEVC (hev1) video or G.711 audio, so the
+    // served DASH must be H.264 + AAC. Probe the source and copy only when it
+    // is already web-friendly; otherwise transcode. An empty video probe
+    // (ffprobe missing/errored) falls through to transcoding so the output is
+    // guaranteed H.264 rather than an unknown passthrough.
+    const std::string videoCodec = probeCodec(mp4Path, "v:0");
+    const std::string audioCodec = probeCodec(mp4Path, "a:0");
+
+    QStringList args;
+    args << "-y"
+         << "-i" << QString::fromStdString(mp4Path);
+
+    if (videoCodec == "h264") {
+        args << "-c:v" << "copy";
+    } else {
+        // -force_key_frames interval matches -seg_duration so the dash muxer can
+        // split cleanly on keyframes.
+        args << "-c:v" << "libx264"
+             << "-preset" << "veryfast"
+             << "-crf" << "23"
+             << "-profile:v" << "high"
+             << "-pix_fmt" << "yuv420p"
+             << "-force_key_frames" << "expr:gte(t,n_forced*4)";
+    }
+
+    if (audioCodec.empty()) {
+        args << "-an";
+    } else if (audioCodec == "aac") {
+        args << "-c:a" << "copy";
+    } else {
+        args << "-c:a" << "aac" << "-b:a" << "128k";
+    }
+
+    args << "-f" << "dash"
+         << "-seg_duration" << "4"
+         << "-init_seg_name"  << "init-stream$RepresentationID$.m4s"
+         << "-media_seg_name" << "chunk-stream$RepresentationID$-$Number%05d$.m4s"
+         << QString::fromStdString(m_mpdPath);
 
     m_process->start("ffmpeg", args);
+}
+
+std::string FfmpegDashPackager::probeCodec(const std::string& path,
+                                           const char*        streamSpec) {
+    QProcess probe;
+    const QStringList args = {
+        "-v", "error",
+        "-select_streams", streamSpec,
+        "-show_entries", "stream=codec_name",
+        "-of", "default=nw=1:nk=1",
+        QString::fromStdString(path)
+    };
+    probe.start("ffprobe", args);
+    if (!probe.waitForStarted(3000) || !probe.waitForFinished(5000) ||
+        probe.exitStatus() != QProcess::NormalExit || probe.exitCode() != 0) {
+        return {};
+    }
+    return probe.readAllStandardOutput().trimmed().toStdString();
 }
 
 void FfmpegDashPackager::cancel() {

@@ -1,0 +1,416 @@
+openapi: "3.0.0"
+info:
+  title: VisionPlayback API
+  description: |
+    HTTP control surface of the **VisionPlayback** daemon — a headless Qt6/C++
+    service that downloads surveillance video from Hikvision cameras via
+    HCNetSDK, transcodes it to web-playable H.264 + AAC and packages it as
+    MPEG-DASH with ffmpeg, and serves it back over an embedded HTTP server.
+
+    The surface is split into three planes:
+
+    - **Control plane** (`POST /playback`) — privileged, server-to-server.
+      Guarded by a fixed `X-API-Key`. Triggers the
+      login → download → ffmpeg-DASH pipeline.
+    - **Polling + delivery plane** (`GET /playback`, `GET /dash/...`) — public,
+      no API key. The opaque `<hash>` returned by the control plane is itself
+      the capability: anyone holding it can poll status and stream segments, but
+      cannot start a new job.
+    - **Download plane** (`GET /download/...`) — public. Remuxes a ready DASH
+      package into a single browser-saveable MP4, optionally trimmed.
+
+    All responses are JSON unless noted, and every response carries
+    `Access-Control-Allow-Origin: *` so browsers can poll, play, and download
+    directly.
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8080
+    description: Local development (default port; no version prefix — routes are served at root)
+
+tags:
+  - name: Control
+    description: Privileged control plane — starts the playback pipeline (requires API key)
+  - name: Playback
+    description: Public polling plane — read the status of a playback job
+  - name: DASH
+    description: Public static delivery of the packaged MPEG-DASH manifest and segments
+  - name: Download
+    description: Public on-demand export of a ready playback as a single MP4 (full or clipped)
+
+# Most routes are public; the control plane opts in to ApiKeyAuth per-operation.
+security: []
+
+paths:
+  # -------------------------------- Control plane
+  /playback:
+    post:
+      tags: [Control]
+      summary: Start (or no-op) a playback download job
+      operationId: startPlayback
+      description: |
+        Triggers the download → ffmpeg → DASH pipeline for one camera recording
+        and returns the polling URL. If the same recording is already cached or
+        a job for it is already in flight, this is a no-op that returns the same
+        polling URL.
+
+        The job identity is a `<hash>` derived from
+        `"<ip>:<port>/ch<channel>/<start>-<end>"` (first 16 hex chars of the
+        configured hash algorithm, default Blake2s-128). `user` and `pass` are
+        **deliberately excluded** from the hash — the artifact identity is the
+        recording, not the credentials, and hashing the password would expose it
+        to offline brute-force.
+
+        > A `200` means the request was **accepted**, not that the video is
+        > ready. Login + download run asynchronously on the processor thread;
+        > failures (bad credentials, SDK or ffmpeg errors) are logged server-side
+        > and flip the job to a failed state, which the polling plane currently
+        > surfaces as `pending`. Poll `GET /playback?id=<hash>` for completion.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaybackRequest"
+      responses:
+        "200":
+          description: Job queued (or already cached / in flight)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PollUrlResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+    get:
+      tags: [Playback]
+      summary: Poll the status of a playback job
+      operationId: getPlaybackStatus
+      description: |
+        Pure status read of an existing job, keyed by the `<hash>` from the
+        polling URL. No API key — the hash is the capability. Replaying the same
+        payload here never starts a new job; only `POST /playback` does.
+
+        Status mapping:
+
+        - `200 ready` — the DASH package is complete; `url` points at the
+          playable manifest.
+        - `202 pending` — the job exists but is not ready yet. This also covers
+          jobs that have **failed** internally; the polling plane does not
+          distinguish failure from in-progress.
+        - `404 unknown_id` — the server has no record of this hash (it was never
+          requested via `POST /playback`).
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/PollId"
+      responses:
+        "200":
+          description: Playback is ready to stream
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackReady"
+        "202":
+          description: Playback is still being downloaded or packaged (or has failed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackPending"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404":
+          description: No job is known for this hash
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackUnknown"
+
+  # -------------------------------- DASH delivery
+  /dash/{hash}/{file}:
+    get:
+      tags: [DASH]
+      summary: Fetch a packaged DASH manifest or segment
+      operationId: getDashFile
+      description: |
+        Serves a single file from a ready playback's DASH package — the
+        `manifest.mpd`, the init segment, or a media chunk. Feed
+        `/dash/<hash>/manifest.mpd` straight into any DASH player (VLC, browser).
+
+        Segments are always **H.264 (`avc1`) video + AAC audio** — the packager
+        transcodes away the cameras' HEVC/`hev1` and G.711, so any browser DASH
+        player (dash.js, `<video>`) can play them with no HEVC codec.
+
+        Paths containing `..` are rejected with `403`. A request for a file that
+        does not exist (or a playback that is not yet ready) returns `404`.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/HashPath"
+        - $ref: "#/components/parameters/DashFile"
+      responses:
+        "200":
+          description: The requested manifest or segment
+          content:
+            application/dash+xml:
+              schema:
+                type: string
+                description: The MPEG-DASH manifest (`manifest.mpd`)
+            video/iso.segment:
+              schema:
+                type: string
+                format: binary
+                description: An init (`init-stream0.m4s`) or media (`chunk-stream0-NNNNN.m4s`) segment
+        "403":
+          description: Forbidden — the path contained `..`
+        "404":
+          description: No such file (or the playback is not yet ready)
+
+  # -------------------------------- Download
+  /download/{hash}:
+    get:
+      tags: [Download]
+      summary: Download a full playback or a clip as one MP4
+      operationId: downloadPlayback
+      description: |
+        Returns a ready playback as a single saveable MP4, built on demand by
+        remuxing its DASH package (`-c copy`, no re-encode). The DASH source is
+        already H.264 + AAC, so the copied MP4 is web-playable. The playback must
+        already be **ready** — request it first via `POST /playback` and poll
+        until `200 ready`.
+
+        `start` and `end` are **offsets in seconds from the start of the
+        recording**; omit both for the whole recording, supply `start` only for
+        "from this point to the end". Because the remux is a stream copy, cuts
+        land on the nearest keyframe — a clip may be off by up to one keyframe
+        interval.
+
+        The server prepares the file asynchronously and returns it in this single
+        request, then deletes it immediately after sending — nothing accumulates
+        on disk.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/HashPath"
+        - $ref: "#/components/parameters/StartSec"
+        - $ref: "#/components/parameters/EndSec"
+      responses:
+        "200":
+          description: |
+            The exported MP4. The `Content-Disposition` header carries a
+            suggested filename of the form
+            `playback-<hash>[-<start>s-<end>s].mp4`.
+          headers:
+            Content-Disposition:
+              description: Attachment filename hint
+              schema:
+                type: string
+                example: 'attachment; filename="playback-730ae17a983691b9.mp4"'
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404":
+          description: 'Playback absent or not yet ready (`message: "not ready"`)'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500": { $ref: "#/components/responses/InternalServerError" }
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        Fixed shared secret required by the control plane, set at daemon startup
+        via `--api-key` (default `visionplayback-dev-key`). Compared in constant
+        time. Replace the default with real secret management before any
+        non-development deployment.
+
+  parameters:
+    HashPath:
+      name: hash
+      in: path
+      required: true
+      description: The 16-hex-char playback identifier returned by `POST /playback`
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{16}$"
+        example: "730ae17a983691b9"
+
+    DashFile:
+      name: file
+      in: path
+      required: true
+      description: A file within the playback's DASH package
+      schema:
+        type: string
+        minLength: 1
+        example: manifest.mpd
+
+    PollId:
+      name: id
+      in: query
+      required: true
+      description: The 16-hex-char playback identifier to poll
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{16}$"
+        example: "730ae17a983691b9"
+
+    StartSec:
+      name: start
+      in: query
+      required: false
+      description: Clip start, in whole seconds offset from the start of the recording
+      schema:
+        type: integer
+        minimum: 0
+        example: 120
+
+    EndSec:
+      name: end
+      in: query
+      required: false
+      description: |
+        Clip end, in whole seconds offset from the start of the recording.
+        Must be greater than `start`.
+      schema:
+        type: integer
+        minimum: 1
+        example: 300
+
+  responses:
+    BadRequest:
+      description: |
+        Malformed request — e.g. `bad payload: <field>` / `<malformed json>` on
+        `POST /playback`, `missing id query param` on `GET /playback`, or
+        `bad hash` / `bad start` / `bad end` / `end must be greater than start`
+        on `GET /download`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    Unauthorized:
+      description: Missing or invalid `X-API-Key`
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    InternalServerError:
+      description: Server-side failure — e.g. the ffmpeg export failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    # -------------------------------- Shared
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [status, message]
+      properties:
+        status:
+          type: string
+          enum: [error]
+          example: error
+        message:
+          type: string
+          description: Human-readable description of what went wrong
+          example: "bad payload: ip"
+
+    PlaybackTimeCompact:
+      type: string
+      description: |
+        Calendar timestamp in compact basic ISO-8601 form `YYYYMMDDTHHMMSS`
+        (UTC). Mirrors the camera SDK's time shape.
+      pattern: "^[0-9]{8}T[0-9]{6}$"
+      example: "20260525T130000"
+
+    # -------------------------------- Control plane
+    PlaybackRequest:
+      type: object
+      additionalProperties: false
+      required: [ip, port, user, pass, channel_id, start_time, end_time]
+      properties:
+        ip:
+          type: string
+          description: Camera IP address or hostname
+          example: "192.168.1.64"
+        port:
+          type: integer
+          description: Camera SDK port
+          minimum: 1
+          maximum: 65535
+          example: 8000
+        user:
+          type: string
+          description: Camera login user (excluded from the playback hash)
+          example: admin
+        pass:
+          type: string
+          format: password
+          writeOnly: true
+          description: Camera login password (excluded from the playback hash; never logged)
+          example: your-password
+        channel_id:
+          type: integer
+          description: Camera channel to play back
+          minimum: 1
+          example: 1
+        start_time:
+          $ref: "#/components/schemas/PlaybackTimeCompact"
+        end_time:
+          $ref: "#/components/schemas/PlaybackTimeCompact"
+
+    PollUrlResponse:
+      type: object
+      additionalProperties: false
+      required: [poll_url]
+      properties:
+        poll_url:
+          type: string
+          format: uri
+          description: URL to poll for job status (`GET /playback?id=<hash>`)
+          example: "http://localhost:8080/playback?id=730ae17a983691b9"
+
+    # -------------------------------- Polling plane
+    PlaybackReady:
+      type: object
+      additionalProperties: false
+      required: [status, url]
+      properties:
+        status:
+          type: string
+          enum: [ready]
+          example: ready
+        url:
+          type: string
+          format: uri
+          description: The playable DASH manifest URL
+          example: "http://localhost:8080/dash/730ae17a983691b9/manifest.mpd"
+
+    PlaybackPending:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending]
+          example: pending
+
+    PlaybackUnknown:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [unknown_id]
+          example: unknown_id

@@ -1,10 +1,10 @@
 # VisionPlayback — Agent Guide
 
 Qt6/C++ **headless console daemon** that downloads surveillance video from
-Hikvision cameras via HCNetSDK, packages it as MPEG-DASH with ffmpeg, and
-serves both a control + polling JSON API and static DASH segments over an
-embedded HTTP server. No GUI. Clients consume the served MPD URLs in any DASH
-player (VLC, browser).
+Hikvision cameras via HCNetSDK, transcodes it to web-playable H.264 + AAC and
+packages it as MPEG-DASH with ffmpeg, and serves both a control + polling JSON
+API and static DASH segments over an embedded HTTP server. No GUI. Clients
+consume the served MPD URLs in any DASH player (VLC, browser).
 
 ---
 
@@ -218,8 +218,8 @@ PlaybackProcessor logs [login-ok] [download] [stream-ready] [stream-error] [logi
 | `src/infra/dvr/HCNetSDKDownloader.h/.cpp`         | `IPlaybackDownloader` impl. Owns its own `std::thread`; SDK polling.                                |
 | `src/infra/dvr/HCNetSDKAuthenticator.h/.cpp`      | `IAuthenticator` impl. Wraps `NET_DVR_Login_V40` / `NET_DVR_Logout_V30`.                            |
 | `src/infra/dvr/HCNetSDKTimeMapper.h`              | The only file that names both `NET_DVR_TIME` and `PlaybackTime`.                                    |
-| `src/infra/packaging/FfmpegDashPackager.h/.cpp`   | `IDashPackager` impl. `ffmpeg -f dash` via `QProcess`.                                              |
-| `src/infra/packaging/FfmpegClipExporter.h/.cpp`   | `IClipExporter` impl. Remuxes `manifest.mpd` → single MP4 via `QProcess` (`-c copy -movflags +faststart`, optional `-ss`/`-t`). Mirrors `FfmpegDashPackager`. |
+| `src/infra/packaging/FfmpegDashPackager.h/.cpp`   | `IDashPackager` impl. `ffmpeg -f dash` via `QProcess`. **Transcodes to web-playable H.264 + AAC** (browsers can't reliably play the cameras' HEVC/`hev1` video or G.711 audio). A blocking `ffprobe` (private `probeCodec()`) reads the source `codec_name` per stream, then copies when already web-friendly (`h264`→`-c:v copy`, `aac`→`-c:a copy`, no audio→`-an`) and transcodes otherwise (`libx264 -preset veryfast -crf 23 -profile:v high -pix_fmt yuv420p` with `-force_key_frames expr:gte(t,n_forced*4)` matched to `-seg_duration 4`; `aac -b:a 128k`). An empty/failed video probe falls through to transcoding so the output is always H.264. |
+| `src/infra/packaging/FfmpegClipExporter.h/.cpp`   | `IClipExporter` impl. Remuxes `manifest.mpd` → single MP4 via `QProcess` (`-c copy -movflags +faststart`, optional `-ss`/`-t`). Mirrors `FfmpegDashPackager`. No transcode needed — the manifest is already H.264 + AAC (the packager guarantees it), so the fast keyframe-bounded copy yields a web-playable MP4. |
 | `src/infra/persistence/FileSystemStreamCache.h/.cpp` | `IStreamCacheRepository` impl. Owns `downloads/<hash>.mp4` + `downloads/<hash>/manifest.mpd`. Implements `evictToCapacity()`: scans completed DASH dirs, sorts oldest-first by `lastModified`, removes until total size ≤ `maxBytes`, skipping keys in the provided exclusion list. |
 | `src/infra/hashing/QtHasher.h/.cpp`              | `IHasher` impl. Wraps `QCryptographicHash`. Supports `blake2s-128` (default), `sha256`, `sha512`. Selected via `--hash-algorithm` at startup. |
 | `src/infra/HCNetSDKBootstrap.{h,cpp}`             | RAII for `NET_DVR_Init` + `NET_DVR_Cleanup`.                                                        |
@@ -334,6 +334,10 @@ GET /dash/<hash>/manifest.mpd     Content-Type: application/dash+xml
 GET /dash/<hash>/<file>.m4s       Content-Type: video/iso.segment
 ```
 
+The served segments are always **H.264 (`avc1`) video + AAC audio** — the
+packager transcodes away the cameras' HEVC/`hev1` and G.711 so any browser DASH
+player (dash.js, `<video>`) can play them without an HEVC codec.
+
 ### Download (frontend, public)
 ```
 GET /download/<hash>                       → whole playback as one MP4
@@ -397,7 +401,7 @@ requests) before any non-development deployment.
 | Library          | Location                | Used for                                    |
 | ---------------- | ----------------------- | ------------------------------------------- |
 | HCNetSDK 6.1.9.4 | `../3rdparty/HCNetSDK/` | Camera login, video download                |
-| ffmpeg (system)  | PATH                    | DASH packaging (via `QProcess`)             |
+| ffmpeg (system)  | PATH                    | H.264/AAC transcode + DASH packaging, codec probing via `ffprobe` (all via `QProcess`) |
 | Qt 6.11          | `~/Qt/6.11.0/gcc_64/`   | Core + Network + HttpServer only (no GUI!)  |
 
 OpenCV, ONNX Runtime, and ZXing are present in `../3rdparty/` but **not
