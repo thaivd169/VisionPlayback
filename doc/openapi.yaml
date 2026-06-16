@@ -236,9 +236,7 @@ components:
       required: true
       description: The 16-hex-char playback identifier returned by `POST /playback`
       schema:
-        type: string
-        pattern: "^[0-9a-f]{16}$"
-        example: "730ae17a983691b9"
+        $ref: "#/components/schemas/PlaybackHash"
 
     DashFile:
       name: file
@@ -256,9 +254,7 @@ components:
       required: true
       description: The 16-hex-char playback identifier to poll
       schema:
-        type: string
-        pattern: "^[0-9a-f]{16}$"
-        example: "730ae17a983691b9"
+        $ref: "#/components/schemas/PlaybackHash"
 
     StartSec:
       name: start
@@ -323,6 +319,15 @@ components:
           type: string
           description: Human-readable description of what went wrong
           example: "bad payload: ip"
+
+    PlaybackHash:
+      type: string
+      description: |
+        The 16-hex-char playback identifier derived from the recording
+        coordinates and returned (inside the poll URL) by `POST /playback`.
+        Used both as the `hash` path segment and the `id` query param.
+      pattern: "^[0-9a-f]{16}$"
+      example: "730ae17a983691b9"
 
     PlaybackTimeCompact:
       type: string
