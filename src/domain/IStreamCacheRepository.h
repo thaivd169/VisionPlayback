@@ -7,7 +7,7 @@
 
 // Synchronous on-disk cache lookup port.
 class IStreamCacheRepository {
-public:
+   public:
     virtual ~IStreamCacheRepository() = default;
 
     // True iff manifest.mpd exists and looks well-formed for `key`.
@@ -19,7 +19,7 @@ public:
     virtual std::string mp4Path(const PlaybackKey& key) const = 0;
     // Directory where the DASH manifest + segments are (or will be) written.
     virtual std::string dashDir(const PlaybackKey& key) const = 0;
-    // Public URL where manifest.mpd is served (hostBase like "http://localhost:8080").
+    // Public URL where manifest.mpd is served (hostBase like "http://localhost:18068").
     virtual std::string mpdUrl(const PlaybackKey& key,
                                std::string_view hostBase) const = 0;
 

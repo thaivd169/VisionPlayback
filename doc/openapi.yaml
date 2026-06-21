@@ -24,7 +24,7 @@ info:
     directly.
   version: "1.0.0"
 servers:
-  - url: http://localhost:8080
+  - url: http://localhost:18068
     description: Local development (default port; no version prefix — routes are served at root)
 
 tags:
@@ -382,7 +382,7 @@ components:
           type: string
           format: uri
           description: URL to poll for job status (`GET /playback?id=<hash>`)
-          example: "http://localhost:8080/playback?id=730ae17a983691b9"
+          example: "http://localhost:18068/playback?id=730ae17a983691b9"
 
     # -------------------------------- Polling plane
     PlaybackReady:
@@ -398,7 +398,7 @@ components:
           type: string
           format: uri
           description: The playable DASH manifest URL
-          example: "http://localhost:8080/dash/730ae17a983691b9/manifest.mpd"
+          example: "http://localhost:18068/dash/730ae17a983691b9/manifest.mpd"
 
     PlaybackPending:
       type: object

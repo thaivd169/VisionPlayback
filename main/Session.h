@@ -31,10 +31,10 @@ class Session : public QObject {
     void createDownloadDir();
 
     QString m_apiKeyCli;
-    quint16 m_portCli = 8080;
+    quint16 m_portCli;
     QString m_downloadsDirCli;
-    int m_loginIdleSecCli = 600;
-    std::uint64_t m_maxDownloadsBytesCli = 100ULL * 1024 * 1024 * 1024;
+    int m_loginIdleSecCli;
+    std::uint64_t m_maxDownloadsBytesCli;
     std::string m_hashAlgorithmCli;
 
     std::unique_ptr<vp::infra::HCNetSDKBootstrap> m_hcnetSdkBootstrap;

@@ -22,15 +22,15 @@ ARG DEBIAN_FRONTEND=noninteractive
 # Qt 6.11's libQt6Core has a DT_NEEDED on libglib-2.0.so.0 (built with glib event
 # loop integration), so it's required to link the executable.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential cmake ninja-build git ca-certificates \
-        python3 python3-venv patchelf \
-        libglib2.0-0 \
+    build-essential cmake ninja-build git ca-certificates \
+    python3 python3-venv patchelf \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Qt 6.11: Core/Network come from qtbase; HttpServer + its WebSockets dep added.
 RUN python3 -m venv /opt/aqt && /opt/aqt/bin/pip install --no-cache-dir aqtinstall \
     && /opt/aqt/bin/aqt install-qt linux desktop ${QT_VERSION} linux_gcc_64 \
-         -m qthttpserver qtwebsockets --outputdir /opt/Qt
+    -m qthttpserver qtwebsockets --outputdir /opt/Qt
 
 # Sources: repo + the HCNetSDK subset placed to satisfy CMake's ../3rdparty path.
 WORKDIR /src
@@ -41,9 +41,9 @@ COPY --from=hcnetsdk lib   /src/3rdparty/HCNetSDK/lib
 # Configure -> build -> install the relocatable tree into /opt/visionplayback.
 # (Bypass CMakePresets: they hard-code the dev machine's HOME/Ninja paths.)
 RUN cmake -S /src/VisionPlayback -B /build -G Ninja \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_PREFIX_PATH=/opt/Qt/${QT_VERSION}/gcc_64 \
-        -DCMAKE_INSTALL_PREFIX=/opt/visionplayback \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH=/opt/Qt/${QT_VERSION}/gcc_64 \
+    -DCMAKE_INSTALL_PREFIX=/opt/visionplayback \
     && cmake --build /build \
     && cmake --install /build
 
@@ -59,7 +59,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # bundle it). No system OpenSSL needed: the app serves plain HTTP (Qt's TLS plugin
 # is never loaded) and the camera SDK uses its own bundled libssl/libcrypto 1.1.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg ca-certificates libglib2.0-0 \
+    ffmpeg ca-certificates libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Qt requires a UTF-8 locale (otherwise it warns and falls back to C.UTF-8).
@@ -76,7 +76,7 @@ COPY --from=builder /opt/visionplayback /opt/visionplayback
 RUN mkdir -p /var/lib/visionplayback/downloads /var/lib/visionplayback/sdkLog
 WORKDIR /var/lib/visionplayback
 
-EXPOSE 8080
+EXPOSE 18068
 VOLUME ["/var/lib/visionplayback/downloads"]
 
 # Stable flags live in ENTRYPOINT so `docker run <img> --api-key=... [--port=...]`
@@ -84,5 +84,5 @@ VOLUME ["/var/lib/visionplayback/downloads"]
 # NOTE: the built-in default API key is an insecure dev placeholder — always pass
 # --api-key=<secret> at run time.
 ENTRYPOINT ["/opt/visionplayback/bin/VisionPlayback", \
-            "--port=8080", \
-            "--downloads-dir=/var/lib/visionplayback/downloads"]
+    "--port=18068", \
+    "--downloads-dir=/var/lib/visionplayback/downloads"]

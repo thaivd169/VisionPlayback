@@ -13,5 +13,5 @@ fi
 
 docker run --rm -it \
     -v "$DOWNLOADS":/var/lib/visionplayback/downloads \
-    -p 8080:8080 \
+    -p 18068:18068 \
     visionplayback:latest --api-key=my-secret-key

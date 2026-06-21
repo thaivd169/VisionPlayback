@@ -19,6 +19,7 @@ Session::Session(int argc, char* argv[], QObject* parent)
       m_portCli(vp::infra::kDefaultPort),
       m_downloadsDirCli(QCoreApplication::applicationDirPath() + "/downloads"),
       m_loginIdleSecCli(vp::infra::kDefaultLoginIdleSeconds),
+      m_maxDownloadsBytesCli(vp::infra::kDefaultMaxDownloadsSizeBytes),
       m_hashAlgorithmCli(vp::infra::kDefaultHashAlgorithm),
       m_hcnetSdkBootstrap(std::make_unique<vp::infra::HCNetSDKBootstrap>("./sdkLog/")),
       m_processorThread(nullptr),
@@ -40,8 +41,10 @@ Session::Session(int argc, char* argv[], QObject* parent)
     m_processorThread = new QThread(this);
     m_httpThread = new QThread(this);
     m_httpListener = new HttpListener(
-        HttpListenerConfig{.port = m_portCli, .apiKey = m_apiKeyCli,
-                           .hostBase = hostBase, .downloadsDir = m_downloadsDirCli,
+        HttpListenerConfig{.port = m_portCli,
+                           .apiKey = m_apiKeyCli,
+                           .hostBase = hostBase,
+                           .downloadsDir = m_downloadsDirCli,
                            .hashAlgorithm = m_hashAlgorithmCli});
     m_httpListener->moveToThread(m_httpThread);
     connect(m_httpThread, &QThread::started, m_httpListener, &HttpListener::started);
