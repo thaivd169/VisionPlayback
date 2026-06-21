@@ -11,9 +11,55 @@ conventions, see [AGENTS.md](AGENTS.md).
 
 ---
 
+## Windows release (portable ZIP)
+
+The daemon ships on Windows as a **self-contained folder** — Qt, the MinGW
+runtime, the full HCNetSDK, and ffmpeg are all bundled, so a target machine runs
+it with nothing pre-installed. Build details live in
+[AGENTS.md](AGENTS.md#windows-portable-zip); the short version:
+
+### Build the package (on a dev machine)
+
+Prerequisites: Qt 6.11 `mingw_64` under `C:\Qt` (bundles GCC / Ninja / CMake), the
+HCNetSDK at `..\HCNetSDK`, and a static ffmpeg build (e.g. from
+[gyan.dev](https://www.gyan.dev/ffmpeg/builds/)) whose `bin\` holds `ffmpeg.exe` +
+`ffprobe.exe`.
+
+```powershell
+# from the repo root
+cmake --preset windows-mingw-release "-DFFMPEG_DIR=C:/path/to/ffmpeg/bin"
+cmake --build --preset windows-mingw-release-install
+Compress-Archive -Path out/install/windows-mingw-release/* `
+                 -DestinationPath VisionPlayback-win64.zip -Force
+```
+
+`VisionPlayback-win64.zip` (~100 MB) is the distributable.
+
+### Run on a target machine
+
+1. Unzip anywhere — no admin rights, no install.
+2. Double-click **`VisionPlayback.bat`**, or from a terminal pass the usual flags:
+
+```bat
+VisionPlayback.bat --api-key=my-secret-key --port=8080 --downloads-dir=D:\playbacks
+```
+
+The launcher prepends the folder to `PATH` (so the bundled ffmpeg is found), then
+runs `VisionPlayback.exe` with the console attached — you'll see `[login-ok]`,
+`[download]`, `[stream-ready]` … events. The HTTP API below is identical on every
+platform.
+
+> If the daemon won't start, or camera login errors immediately, the target may
+> need the x64 **Visual C++ Redistributable** (HCNetSDK's DLLs are MSVC-built).
+> Install it once — an installer ships with Qt at `C:\Qt\vcredist`.
+
+---
+
 ## HTTP API — curl reference
 
 ### Start the daemon
+
+Linux in-tree run (for Windows, see [Windows release](#windows-release-portable-zip) above):
 
 ```bash
 LD_LIBRARY_PATH=/home/thaivd/TDIC/3rdparty/HCNetSDK/lib \

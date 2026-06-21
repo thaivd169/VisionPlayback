@@ -78,6 +78,9 @@ CMakeUserPresets.json
 *.dll
 *.exe
 
+# Packaged release artifacts (cmake --install + Compress-Archive / cpack)
+*.zip
+
 # VisionPlayback runtime data (auto-regenerated)
 sdkLog/
 downloads/

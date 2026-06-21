@@ -37,6 +37,40 @@
             "environment": {
                 "LD_LIBRARY_PATH": "${sourceDir}/../3rdparty/HCNetSDK/lib"
             }
+        },
+        {
+            "name": "windows-mingw-debug",
+            "displayName": "Debug with Ninja for windows-amd64 (MinGW)",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_MAKE_PROGRAM": "C:/Qt/Tools/Ninja/ninja.exe",
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "CMAKE_C_COMPILER": "C:/Qt/Tools/mingw1310_64/bin/gcc.exe",
+                "CMAKE_CXX_COMPILER": "C:/Qt/Tools/mingw1310_64/bin/g++.exe",
+                "CMAKE_PREFIX_PATH": "C:/Qt/6.11.0/mingw_64",
+                "CMAKE_BUILD_TYPE": "Debug"
+            },
+            "environment": {
+                "PATH": "C:/Qt/Tools/mingw1310_64/bin;C:/Qt/6.11.0/mingw_64/bin;$penv{PATH}"
+            }
+        },
+        {
+            "name": "windows-mingw-release",
+            "displayName": "Release with Ninja for windows-amd64 (MinGW)",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_MAKE_PROGRAM": "C:/Qt/Tools/Ninja/ninja.exe",
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "CMAKE_C_COMPILER": "C:/Qt/Tools/mingw1310_64/bin/gcc.exe",
+                "CMAKE_CXX_COMPILER": "C:/Qt/Tools/mingw1310_64/bin/g++.exe",
+                "CMAKE_PREFIX_PATH": "C:/Qt/6.11.0/mingw_64",
+                "CMAKE_BUILD_TYPE": "Release"
+            },
+            "environment": {
+                "PATH": "C:/Qt/Tools/mingw1310_64/bin;C:/Qt/6.11.0/mingw_64/bin;$penv{PATH}"
+            }
         }
     ],
     "buildPresets": [
@@ -53,6 +87,20 @@
             "displayName": "Build + install the self-contained release tree",
             "configurePreset": "amd64-release",
             "targets": ["install"]
+        },
+        {
+            "name": "windows-mingw-debug",
+            "configurePreset": "windows-mingw-debug"
+        },
+        {
+            "name": "windows-mingw-release",
+            "configurePreset": "windows-mingw-release"
+        },
+        {
+            "name": "windows-mingw-release-install",
+            "displayName": "Build + install the self-contained Windows release tree",
+            "configurePreset": "windows-mingw-release",
+            "targets": ["install"]
         }
     ],
     "workflowPresets": [
@@ -68,6 +116,20 @@
             "steps": [
                 { "type": "configure", "name": "amd64-release" },
                 { "type": "build",     "name": "amd64-release" }
+            ]
+        },
+        {
+            "name": "windows-mingw-debug",
+            "steps": [
+                { "type": "configure", "name": "windows-mingw-debug" },
+                { "type": "build",     "name": "windows-mingw-debug" }
+            ]
+        },
+        {
+            "name": "windows-mingw-release",
+            "steps": [
+                { "type": "configure", "name": "windows-mingw-release" },
+                { "type": "build",     "name": "windows-mingw-release" }
             ]
         }
     ]
