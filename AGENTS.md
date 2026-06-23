@@ -35,6 +35,38 @@ cmake --workflow --preset amd64-debug
 classes inside static libraries are picked up because each layer uses
 `qt_add_library(... STATIC ...)` (not plain `add_library`).
 
+### Windows (MinGW)
+
+The same tree builds natively on Windows with the **MinGW** Qt kit — no source
+changes, no MSVC. Prerequisites: Qt 6.11 `mingw_64` under `C:\Qt` (which bundles
+GCC 13.1, Ninja, and CMake under `C:\Qt\Tools`) and HCNetSDK at `..\HCNetSDK`
+(the Windows SDK ships `HCNetSDK.lib` + `.dll`, not `.so`). ffmpeg is **not**
+needed to build — only to run (see Install / Deploy).
+
+```bat
+:: Configure + build (debug)  → out\build\windows-mingw-debug\VisionPlayback.exe
+cmake --preset windows-mingw-debug
+cmake --build --preset windows-mingw-debug
+```
+
+Swap `windows-mingw-debug` → `windows-mingw-release` for release. The
+`windows-mingw-*` presets seed `PATH` with `C:/Qt/Tools/mingw1310_64/bin` so the
+GCC backend (`cc1plus.exe`) can load its own DLLs — **without it, configure fails
+with a misleading "the C++ compiler is broken" error.** On x64 the SDK's
+`__stdcall` exports are undecorated, so MinGW links Hikvision's MSVC-built
+`HCNetSDK.lib` directly (fallback if `ld` rejects it: link `HCNetSDK.dll`). A
+POST_BUILD step copies the HCNetSDK DLLs (+ the `HCNetSDKCom/` plugin dir) next
+to the exe; to run the in-tree debug build, also put the Qt and MinGW `bin` dirs
+on `PATH`:
+
+```powershell
+$env:PATH = "C:\Qt\6.11.0\mingw_64\bin;C:\Qt\Tools\mingw1310_64\bin;$env:PATH"
+.\out\build\windows-mingw-debug\VisionPlayback.exe --api-key=visionplayback-dev-key
+```
+
+The Linux (`amd64-*`) and Windows (`windows-mingw-*`) presets coexist; all
+Windows handling in CMake is gated behind `if(WIN32)`.
+
 ---
 
 ## Install / Deploy
@@ -101,6 +133,48 @@ files are owned by `root` on the host (use `sudo` to delete/move them). To run
 non-root instead — files owned by your host user, smaller blast radius — add a
 service user whose uid/gid match the host (`useradd -u $(id -u) …` + `USER`) and
 ensure the bind-mount target is owned by that uid.
+
+### Windows (portable ZIP)
+
+`cmake --install` produces the same kind of self-contained tree for Windows, but
+**flat** — exe + every DLL in one dir (the loader searches the exe's own folder
+first; no `bin/`+`lib/` split, no RPATH). Unlike the Linux tree it also bundles
+**ffmpeg**, so a target machine needs nothing pre-installed.
+
+```powershell
+# point -DFFMPEG_DIR at a folder holding ffmpeg.exe + ffprobe.exe (a static
+# Windows build, e.g. gyan.dev) to bundle them; omit it to leave ffmpeg out.
+cmake --preset windows-mingw-release "-DFFMPEG_DIR=C:/path/to/ffmpeg/bin"
+cmake --build --preset windows-mingw-release-install   # build + install
+Compress-Archive -Path out/install/windows-mingw-release/* `
+                 -DestinationPath VisionPlayback-win64.zip -Force
+```
+
+Layout (`out\install\windows-mingw-release\`):
+
+```
+VisionPlayback.exe          ← entry point
+VisionPlayback.bat          ← launcher: prepends the folder to PATH, then runs the exe
+ffmpeg.exe  ffprobe.exe     ← bundled only when -DFFMPEG_DIR was given
+Qt6Core.dll Qt6Network.dll Qt6HttpServer.dll Qt6WebSockets.dll
+libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll   ← MinGW runtime
+networkinformation/  tls/   ← Qt plugins (deployed flat by windeployqt)
+HCNetSDK.dll + deps         ← HCNetSDK core
+HCNetSDKCom/*.dll           ← HCNetSDK dlopen plugins
+```
+
+The install calls **windeployqt directly** — not `qt_generate_deploy_app_script`,
+which forces a nested `bin/`+`plugins/` split that breaks the flat exe. The SDK
+DLLs come from `install(DIRECTORY ${HCNETSDK_ROOT}/lib FILES_MATCHING PATTERN
+"*.dll")` (the `*.so*` pattern is the Linux branch). Target machines **unzip and
+run `VisionPlayback.bat`** — it puts the folder on `PATH` so the bundled
+`ffmpeg`/`ffprobe` (spawned via `QProcess`) resolve regardless of working dir. No
+Qt, MinGW, SDK, or ffmpeg install needed.
+
+**Possible target-machine prerequisite:** HCNetSDK's DLLs are MSVC/Intel-built
+and may need the x64 **Visual C++ Redistributable** (`vcruntime140.dll` etc.);
+MinGW-built Qt does not. If `NET_DVR_Init`/login fails on a clean box, install it
+(an installer ships at `C:\Qt\vcredist`).
 
 ---
 
@@ -402,6 +476,10 @@ requests) before any non-development deployment.
 | HCNetSDK 6.1.9.4 | `../3rdparty/HCNetSDK/` | Camera login, video download                                                           |
 | ffmpeg (system)  | PATH                    | H.264/AAC transcode + DASH packaging, codec probing via `ffprobe` (all via `QProcess`) |
 | Qt 6.11          | `~/Qt/6.11.0/gcc_64/`   | Core + Network + HttpServer only (no GUI!)                                             |
+
+On Windows these live at `C:\Qt\6.11.0\mingw_64` (Qt; MinGW toolchain under
+`C:\Qt\Tools`) and `..\HCNetSDK` (ships `HCNetSDK.lib` + `.dll`); ffmpeg is
+bundled into the release ZIP via `-DFFMPEG_DIR` instead of taken from `PATH`.
 
 OpenCV, ONNX Runtime, and ZXing are present in `../3rdparty/` but **not
 linked** — do not add them without discussion.

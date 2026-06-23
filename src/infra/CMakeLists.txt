@@ -27,11 +27,20 @@ target_include_directories(vp_infra
             ${CMAKE_CURRENT_SOURCE_DIR}/packaging
             ${CMAKE_CURRENT_SOURCE_DIR}/persistence
             ${CMAKE_CURRENT_SOURCE_DIR}/hashing
-    PRIVATE ${TD_3RDPARTY_PATH}/HCNetSDK/incEn
+    PRIVATE ${HCNETSDK_ROOT}/incEn
 )
 target_link_libraries(vp_infra
     PUBLIC  vp_domain
             Qt${QT_VERSION_MAJOR}::Core
-    PRIVATE ${TD_3RDPARTY_PATH}/HCNetSDK/lib/libhcnetsdk.so
 )
+# HCNetSDK is linked by absolute path so consumers don't inherit -L flags.
+# On Windows (x64) the SDK's __stdcall exports are undecorated, so MinGW links
+# Hikvision's MSVC-built import lib directly. Fallback if `ld` rejects the .lib:
+# link ${HCNETSDK_ROOT}/lib/HCNetSDK.dll instead (and add ws2_32 if winsock
+# symbols are reported undefined).
+if(WIN32)
+  target_link_libraries(vp_infra PRIVATE ${HCNETSDK_ROOT}/lib/HCNetSDK.lib)
+else()
+  target_link_libraries(vp_infra PRIVATE ${HCNETSDK_ROOT}/lib/libhcnetsdk.so)
+endif()
 target_compile_features(vp_infra PUBLIC cxx_std_20)
